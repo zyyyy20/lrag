@@ -1,0 +1,23 @@
+# env
+.env
+.env.local
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# node
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# uploads
+backend/uploads/
+
+# os
+.DS_Store
+Thumbs.db
