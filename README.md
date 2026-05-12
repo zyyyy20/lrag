@@ -184,7 +184,7 @@ CHUNK_OVERLAP=120
 
 ## 备注
 
-- 上传大小默认上限 20MB，支持 `.pdf / .txt / .md / .markdown`
+- 上传大小默认上限 20MB，支持 `.pdf / .docx / .txt / .md / .markdown`（暂不支持旧版 `.doc`）
 - 文档处理在 FastAPI BackgroundTask 中异步执行；前端会自动轮询状态
 - 后端启动时会自动 `CREATE EXTENSION vector` 并通过 SQLAlchemy 建表
 - API Key 仅通过环境变量加载，不会硬编码进代码

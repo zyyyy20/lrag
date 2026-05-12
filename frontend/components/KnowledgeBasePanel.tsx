@@ -192,7 +192,7 @@ export function KnowledgeBasePanel({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.txt,.md,.markdown"
+            accept=".pdf,.txt,.md,.markdown,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -209,7 +209,7 @@ export function KnowledgeBasePanel({
               ? "请先选择知识库"
               : uploading
               ? "上传中…"
-              : "+ 上传 PDF / TXT / Markdown"}
+              : "+ 上传 PDF / Word / TXT / Markdown"}
           </button>
           {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
         </div>

@@ -1,23 +1,31 @@
 """Text extraction and chunking utilities."""
 from __future__ import annotations
 
-import io
 import re
 from pathlib import Path
 from typing import List
 
+from docx import Document as DocxDocument
 from pypdf import PdfReader
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
+SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".docx"}
+
+# Common MIME types we accept. Word's content-type tends to be long, so we just
+# look for the well-known token in a case-insensitive way.
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def extract_text(file_path: str, content_type: str | None = None) -> str:
     p = Path(file_path)
     ext = p.suffix.lower()
-    if ext == ".pdf" or (content_type and "pdf" in content_type):
+    ct = (content_type or "").lower()
+
+    if ext == ".pdf" or "pdf" in ct:
         return _extract_pdf(p)
-    if ext in {".txt", ".md", ".markdown"} or (content_type and "text" in (content_type or "")):
+    if ext == ".docx" or "wordprocessingml" in ct or ct == DOCX_MIME:
+        return _extract_docx(p)
+    if ext in {".txt", ".md", ".markdown"} or "text" in ct:
         return p.read_text(encoding="utf-8", errors="ignore")
     raise ValueError(f"Unsupported file extension: {ext}")
 
@@ -31,6 +39,26 @@ def _extract_pdf(p: Path) -> str:
                 parts.append(page.extract_text() or "")
             except Exception:
                 continue
+    return "\n".join(parts)
+
+
+def _extract_docx(p: Path) -> str:
+    """Extract text from a .docx file. Includes paragraphs and table cells."""
+    doc = DocxDocument(str(p))
+    parts: List[str] = []
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if text:
+            parts.append(text)
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [
+                (cell.text or "").strip()
+                for cell in row.cells
+                if (cell.text or "").strip()
+            ]
+            if cells:
+                parts.append(" | ".join(cells))
     return "\n".join(parts)
 
 
