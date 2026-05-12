@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import List, Tuple
+from typing import Generator, List, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -136,6 +136,84 @@ def answer_question(
 
     answer = get_llm().chat(messages)
     return answer, use_rag, sources, notice
+
+
+StreamEvent = Tuple[str, dict]
+
+
+def answer_question_stream(
+    db: Session, session: ChatSession, user_message: str
+) -> Generator[StreamEvent, None, None]:
+    """Streaming variant of answer_question.
+
+    Yields events of the form (event_name, payload):
+      - ("meta",  {"used_rag", "sources", "notice"})  — emitted exactly once before any deltas
+      - ("delta", {"content": str})                   — emitted many times as tokens arrive
+      - ("final", {"content": str})                   — emitted once at end with full assembled text
+    """
+    settings = get_settings()
+    notice: str | None = None
+
+    use_rag_intent = (
+        session.chat_mode == ChatMode.rag and session.knowledge_base_id is not None
+    )
+
+    relevant: List[RetrievedChunk] = []
+    if use_rag_intent:
+        kb = db.get(KnowledgeBase, session.knowledge_base_id)
+        if kb is None or kb.is_deleted:
+            notice = "当前会话绑定的知识库已被删除，已自动降级为普通聊天。"
+            use_rag_intent = False
+        else:
+            try:
+                retrieved = retrieve(
+                    db,
+                    user_message,
+                    knowledge_base_id=session.knowledge_base_id,
+                    top_k=settings.rag_top_k,
+                )
+            except Exception:
+                logger.exception("Retrieval failed; falling back to plain chat")
+                retrieved = []
+            relevant = [c for c in retrieved if c.score >= settings.rag_score_threshold]
+
+    use_rag = bool(relevant)
+    sources = _to_sources(relevant) if use_rag else []
+    history = _history_messages(db, session.id)
+
+    if use_rag:
+        context_block = _build_context_block(relevant)
+        user_with_ctx = (
+            f"CONTEXT:\n{context_block}\n\n"
+            f"USER QUESTION:\n{user_message}"
+        )
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_RAG},
+            *history,
+            {"role": "user", "content": user_with_ctx},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_BASE},
+            *history,
+            {"role": "user", "content": user_message},
+        ]
+
+    yield (
+        "meta",
+        {
+            "used_rag": use_rag,
+            "sources": [s.model_dump(mode="json") for s in sources],
+            "notice": notice,
+        },
+    )
+
+    parts: List[str] = []
+    for delta in get_llm().chat_stream(messages):
+        parts.append(delta)
+        yield ("delta", {"content": delta})
+
+    yield ("final", {"content": "".join(parts)})
 
 
 def generate_title(first_user_message: str) -> str:

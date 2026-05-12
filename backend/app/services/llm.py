@@ -3,7 +3,7 @@ DeepSeek / Qwen (DashScope compatible-mode) when given a custom base_url."""
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import Generator, List
 
 from openai import OpenAI
 
@@ -37,6 +37,28 @@ class LLMClient:
             max_tokens=max_tokens,
         )
         return (resp.choices[0].message.content or "").strip()
+
+    def chat_stream(
+        self,
+        messages: List[dict],
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+    ) -> Generator[str, None, None]:
+        """Yield incremental content deltas from the LLM. Empty/None deltas are skipped."""
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            content = getattr(delta, "content", None) if delta else None
+            if content:
+                yield content
 
 
 class EmbeddingClient:

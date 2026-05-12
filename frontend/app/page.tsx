@@ -171,33 +171,68 @@ export default function HomePage() {
     setSending(true);
     setChatError(null);
     setChatNotice(null);
-    const optimistic: Message = {
-      id: `tmp-${Date.now()}`,
+
+    const userId = `tmp-user-${Date.now()}`;
+    const assistantId = `tmp-assistant-${Date.now()}`;
+    const optimisticUser: Message = {
+      id: userId,
       role: "user",
       content: text,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, optimistic]);
+    const streamingAssistant: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      used_rag: false,
+      sources: [],
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
+
+    let receivedSessionId: string | null = currentSessionId;
+    let streamFailed = false;
+
     try {
-      const res = await api.chat(text, currentSessionId);
-      const assistant: Message = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: res.answer,
-        used_rag: res.used_rag,
-        sources: res.sources,
-        created_at: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, assistant]);
-      if (res.notice) setChatNotice(res.notice);
-      if (!currentSessionId) {
-        setCurrentSessionId(res.session_id);
-      }
-      refreshSessions();
+      await api.chatStream(text, currentSessionId, {
+        onMeta: (meta) => {
+          receivedSessionId = meta.session_id;
+          if (meta.notice) setChatNotice(meta.notice);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, used_rag: meta.used_rag, sources: meta.sources }
+                : m
+            )
+          );
+        },
+        onDelta: (delta) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: m.content + delta }
+                : m
+            )
+          );
+        },
+        onDone: () => {
+          if (!currentSessionId && receivedSessionId) {
+            setCurrentSessionId(receivedSessionId);
+          }
+          refreshSessions();
+        },
+        onError: (msg) => {
+          streamFailed = true;
+          setChatError(msg);
+        },
+      });
     } catch (e) {
+      streamFailed = true;
       setChatError(e instanceof Error ? e.message : String(e));
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
     } finally {
+      if (streamFailed) {
+        setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+      }
       setSending(false);
     }
   };

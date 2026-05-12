@@ -79,6 +79,13 @@ export const api = {
       body: JSON.stringify({ message, session_id: sessionId ?? null }),
     }),
 
+  chatStream: (
+    message: string,
+    sessionId: string | null,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal
+  ) => chatStream(message, sessionId, handlers, signal),
+
   // ---- Documents ----
   listDocuments: (knowledgeBaseId?: string | null) => {
     const qs = knowledgeBaseId ? `?knowledge_base_id=${knowledgeBaseId}` : "";
@@ -96,3 +103,111 @@ export const api = {
   deleteDocument: (id: string) =>
     request<void>(`/api/documents/${id}`, { method: "DELETE" }),
 };
+
+
+// ===== SSE streaming chat =====
+
+export interface ChatStreamMeta {
+  session_id: string;
+  used_rag: boolean;
+  sources: import("./types").Source[];
+  notice?: string | null;
+}
+
+export interface ChatStreamDone {
+  session_id: string;
+  title: string;
+}
+
+export interface ChatStreamHandlers {
+  onMeta?: (meta: ChatStreamMeta) => void;
+  onDelta?: (delta: string) => void;
+  onDone?: (done: ChatStreamDone) => void;
+  onError?: (message: string) => void;
+}
+
+async function chatStream(
+  message: string,
+  sessionId: string | null,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({ message, session_id: sessionId }),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    let detail = `Stream failed: ${res.status}`;
+    try {
+      const body = await res.json();
+      detail = body?.error?.message || body?.detail || detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    throw new Error(detail);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  const dispatch = (rawEvent: string) => {
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of rawEvent.split("\n")) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      // ignore comments (":") and other fields
+    }
+    if (dataLines.length === 0) return;
+    const dataStr = dataLines.join("\n");
+    let data: unknown;
+    try {
+      data = JSON.parse(dataStr);
+    } catch {
+      return;
+    }
+    if (eventName === "meta") {
+      handlers.onMeta?.(data as ChatStreamMeta);
+    } else if (eventName === "delta") {
+      const content = (data as { content?: string }).content;
+      if (typeof content === "string" && content.length > 0) {
+        handlers.onDelta?.(content);
+      }
+    } else if (eventName === "done") {
+      handlers.onDone?.(data as ChatStreamDone);
+    } else if (eventName === "error") {
+      const msg = (data as { message?: string }).message ?? "stream error";
+      handlers.onError?.(msg);
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line ("\n\n")
+      let sepIdx: number;
+      while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        if (frame.trim()) dispatch(frame);
+      }
+    }
+    // flush any trailing frame
+    const tail = buffer.trim();
+    if (tail) dispatch(tail);
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return;
+    handlers.onError?.((e as Error).message);
+    throw e;
+  }
+}

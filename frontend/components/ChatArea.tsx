@@ -70,16 +70,17 @@ export function ChatArea({
           </div>
         )}
         <ul className="mx-auto flex max-w-3xl flex-col gap-4">
-          {messages.map((m) => (
-            <MessageBubble key={m.id} message={m} />
-          ))}
-          {sending && (
-            <li className="flex">
-              <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
-                <span className="inline-block animate-pulse">正在思考…</span>
-              </div>
-            </li>
-          )}
+          {messages.map((m, idx) => {
+            const isLast = idx === messages.length - 1;
+            const isStreaming = sending && isLast && m.role === "assistant";
+            return (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                streaming={isStreaming}
+              />
+            );
+          })}
         </ul>
       </div>
 
@@ -126,18 +127,32 @@ export function ChatArea({
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  streaming,
+}: {
+  message: Message;
+  streaming?: boolean;
+}) {
   const isUser = message.role === "user";
+  const isEmptyStreaming = streaming && !message.content;
   return (
     <li className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
-          isUser
-            ? "bg-brand-600 text-white"
-            : "bg-white text-slate-800"
+          isUser ? "bg-brand-600 text-white" : "bg-white text-slate-800"
         }`}
       >
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        {isEmptyStreaming ? (
+          <span className="inline-block animate-pulse text-slate-500">正在思考…</span>
+        ) : (
+          <div className="whitespace-pre-wrap">
+            {message.content}
+            {streaming && (
+              <span className="ml-0.5 inline-block h-3.5 w-1.5 -mb-0.5 animate-pulse bg-slate-400 align-middle" />
+            )}
+          </div>
+        )}
         {!isUser && message.used_rag && message.sources && message.sources.length > 0 && (
           <SourcesView sources={message.sources} />
         )}
