@@ -1,3 +1,8 @@
+"""会话（聊天线程）CRUD：创建、列表、详情、软删除。
+
+会话与 ``messages`` 一对多；``chat_mode`` 与 ``knowledge_base_id`` 决定后续对话
+是否走 RAG。软删除通过 ``is_deleted`` 标记，列表与详情接口不返回已删会话。
+"""
 from __future__ import annotations
 
 import uuid
@@ -16,6 +21,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 def _kb_name(db: Session, kb_id: uuid.UUID | None) -> str | None:
+    """解析知识库显示名；若 KB 已删或不存在则返回 ``None``（前端可不展示）。"""
     if kb_id is None:
         return None
     kb = db.get(KnowledgeBase, kb_id)
@@ -23,6 +29,7 @@ def _kb_name(db: Session, kb_id: uuid.UUID | None) -> str | None:
 
 
 def _to_out(db: Session, s: ChatSession) -> SessionOut:
+    """将 ORM ``Session`` 转为 API 输出模型（含知识库名称冗余字段）。"""
     return SessionOut(
         id=s.id,
         title=s.title,
@@ -38,6 +45,11 @@ def _to_out(db: Session, s: ChatSession) -> SessionOut:
 def create_session(
     payload: SessionCreate | None = None, db: Session = Depends(get_db)
 ) -> SessionOut:
+    """创建新会话。
+
+    - ``chat_mode=rag`` 时必须提供有效且未删除的 ``knowledge_base_id``；
+    - ``chat_mode=general`` 时强制清空 ``knowledge_base_id``，避免误绑 KB。
+    """
     payload = payload or SessionCreate()
     chat_mode = payload.chat_mode
     kb_id = payload.knowledge_base_id
@@ -52,7 +64,6 @@ def create_session(
         if kb is None or kb.is_deleted:
             raise HTTPException(status_code=404, detail="Knowledge base not found")
     else:
-        # plain chat must not be bound to a KB
         kb_id = None
 
     title = (payload.title or "新会话").strip() or "新会话"
@@ -65,6 +76,7 @@ def create_session(
 
 @router.get("", response_model=List[SessionOut])
 def list_sessions(db: Session = Depends(get_db)) -> List[SessionOut]:
+    """列出未软删会话，按 ``updated_at`` 倒序（最近活跃在前）。"""
     rows = (
         db.query(ChatSession)
         .filter(ChatSession.is_deleted.is_(False))
@@ -76,6 +88,7 @@ def list_sessions(db: Session = Depends(get_db)) -> List[SessionOut]:
 
 @router.get("/{session_id}", response_model=SessionDetail)
 def get_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> SessionDetail:
+    """会话详情：含全部消息（前端用于刷新后恢复历史）。"""
     s = db.get(ChatSession, session_id)
     if s is None or s.is_deleted:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -92,6 +105,7 @@ def get_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> Session
     response_class=Response,
 )
 def delete_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """软删除会话（``is_deleted=True``）；消息随 ORM 级联删除。"""
     s = db.get(ChatSession, session_id)
     if s is None or s.is_deleted:
         raise HTTPException(status_code=404, detail="Session not found")

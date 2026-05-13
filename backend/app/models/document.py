@@ -1,3 +1,4 @@
+"""文档表：归属知识库的上传文件及索引状态。"""
 from __future__ import annotations
 
 import enum
@@ -13,6 +14,8 @@ from ..database import Base
 
 
 class DocumentStatus(str, enum.Enum):
+    """文档生命周期：上传 → 处理中 → 已索引 / 失败；删除为软删。"""
+
     uploaded = "uploaded"
     processing = "processing"
     indexed = "indexed"
@@ -21,6 +24,8 @@ class DocumentStatus(str, enum.Enum):
 
 
 class Document(Base):
+    """用户上传的原始文件元数据；正文切块在 ``document_chunks``。"""
+
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = mapped_column(

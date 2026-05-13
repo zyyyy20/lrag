@@ -1,3 +1,15 @@
+"""聊天相关 HTTP 接口：非流式 ``/api/chat`` 与 SSE 流式 ``/api/chat/stream``。
+
+**非流式**：使用 ``Depends(get_db)``，在一次请求生命周期内完成：建会话（可选）、
+写用户消息、调用 ``answer_question``、写助手消息、生成标题、``commit``。
+
+**流式（SSE）**：**不能**在路由函数参数里依赖 ``get_db`` 生成器——FastAPI 会在
+路由返回 ``StreamingResponse`` 后立即关闭 DB Session，而 body 生成器此时尚未
+执行，会导致 ORM 对象脱离 Session。因此采用两阶段 ``session_scope``：
+1. Phase1：短事务内创建/校验会话并持久化用户消息；
+2. Phase2：在 ``event_generator`` 内新开长事务，跑 ``answer_question_stream``、
+   写助手消息、更新标题，再 ``yield`` SSE ``done``。
+"""
 from __future__ import annotations
 
 import json
@@ -26,7 +38,11 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    """Non-streaming chat endpoint (kept for backward compatibility)."""
+    """非流式对话：一次请求返回完整 JSON（含 ``answer`` / ``used_rag`` / ``sources``）。
+
+    流程：无 ``session_id`` 时创建普通会话；校验会话；写入用户消息；调用编排层；
+    写入助手消息；首条消息时异步生成标题；提交事务。
+    """
     if payload.session_id is None:
         session = ChatSession(title="新会话", chat_mode=ChatMode.general, knowledge_base_id=None)
         db.add(session)
@@ -70,27 +86,22 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
 
 
 def _sse(event: str, data: dict) -> str:
-    """Format a single SSE event frame."""
+    """将事件名与 JSON 负载编码为一条标准 SSE 文本帧（以双换行结尾）。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.post("/chat/stream")
 def chat_stream(payload: ChatRequest) -> StreamingResponse:
-    """Streaming chat endpoint that emits Server-Sent Events.
+    """SSE 流式对话：响应体为 ``text/event-stream``。
 
-    Event protocol:
-      - event: meta   data: {session_id, used_rag, sources, notice}
-      - event: delta  data: {content}                  (many)
-      - event: done   data: {session_id, title}
-      - event: error  data: {message}
+    事件约定：
+    - ``meta``：``session_id``、``used_rag``、``sources``、``notice``（与前端首包对齐）；
+    - ``delta``：增量 ``content``；
+    - ``done``：``session_id``、``title``（标题可能刚被生成）；
+    - ``error``：异常信息字符串。
 
-    Note: this endpoint deliberately does NOT use Depends(get_db). FastAPI tears
-    down generator-based dependencies right after the route function returns,
-    which would close the DB session before the StreamingResponse body is
-    actually iterated. Instead we manage DB sessions explicitly via
-    `session_scope()` inside the generator.
+    详见模块文档字符串中关于 DB Session 生命周期的说明。
     """
-    # --- Phase 1: validate input and persist user message in a short-lived session ---
     session_id: uuid.UUID
     is_first_message: bool
     with session_scope() as db:
@@ -112,7 +123,6 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
             )
 
         db.add(Message(session_id=session_id, role="user", content=payload.message))
-        # commit happens implicitly on scope exit
 
     session_id_str = str(session_id)
     user_message_text = payload.message
@@ -124,7 +134,6 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
         full_text_parts: list[str] = []
         final_title: str | None = None
         try:
-            # --- Phase 2: retrieve + stream + persist within a single DB session ---
             with session_scope() as db:
                 session_obj = db.get(ChatSession, session_id)
                 if session_obj is None or session_obj.is_deleted:
@@ -169,7 +178,6 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         logger.warning("Title generation failed", exc_info=True)
 
                 final_title = session_obj.title
-                # commit happens on scope exit
 
             yield _sse("done", {"session_id": session_id_str, "title": final_title})
         except Exception as e:

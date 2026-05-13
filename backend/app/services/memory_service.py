@@ -1,16 +1,18 @@
-"""Conversation Memory service.
+"""会话级对话记忆（Conversation Memory）服务。
 
-负责：
-1. 按 session 加载最近 N 条消息（不允许跨 session）；
-2. 把消息列表按 token 预算截断，保留最近上下文；
-3. 基于历史构造更优的"检索查询语句"（current + 最近一轮 user message）。
+本模块不直接调用大模型，只负责从数据库读取、裁剪、格式化「与当前会话绑定的」
+历史消息，以及构造用于向量检索的查询字符串。
 
-设计原则：
-- Memory 始终绑定到单个 session_id；删除 session 时其消息会随 ORM 级联删除，
-  memory 自然失效。
-- 仅服务层使用，不在 router 直接调用 ORM；保持分层。
-- token 计数使用 tiktoken 的 cl100k_base（与 OpenAI 多数模型一致）。对 Qwen
-  等其它模型属于近似估算，足够用于"丢历史"的预算控制。
+设计原则（与需求对齐）：
+1. **严格按 session 隔离**：所有查询必须带 ``session_id``，禁止跨会话共享；
+2. **删除会话即记忆失效**：依赖 ORM 级联删除 ``messages``，本层不维护额外缓存；
+3. **Token 预算**：与 ``prompt_builder`` 配合，用 ``count_tokens`` / ``truncate_by_tokens``
+   控制进入 LLM 的历史长度；
+4. **检索 query 不堆整段历史**：仅用「当前问题 + 最近一条 user 消息」组合，
+   减少 embedding 噪声与话题漂移。
+
+Token 计数默认使用 tiktoken ``cl100k_base``；对 Qwen 等模型为近似值，仅用于
+「丢最早历史」的相对排序，不追求与网关计费 token 完全一致。
 """
 from __future__ import annotations
 
@@ -25,18 +27,15 @@ from ..models import Message
 
 logger = logging.getLogger(__name__)
 
-
-# 允许进入 LLM prompt 的角色白名单（防止脏数据 / 注入 system 角色）
+# 仅允许 user / assistant 进入记忆与 prompt；防止脏数据伪造 system 角色
 _ALLOWED_ROLES = {"user", "assistant"}
 
-
-# ----- token 计数 -----
-
-_ENC = None  # tiktoken encoder 单例
+# tiktoken 编码器单例；False 表示已尝试加载失败，改用字符估算
+_ENC: object | None = None
 
 
 def _get_encoder():
-    """惰性初始化 tiktoken encoder。若环境缺失（极少见）则降级为字符估算。"""
+    """惰性加载 tiktoken 编码器；失败则标记为 False 并走字符估算分支。"""
     global _ENC
     if _ENC is not None:
         return _ENC
@@ -46,12 +45,21 @@ def _get_encoder():
         _ENC = tiktoken.get_encoding("cl100k_base")
     except Exception:
         logger.warning("tiktoken unavailable; falling back to char-based token estimate")
-        _ENC = False  # 用 False 表示已尝试过但失败，避免反复探测
+        _ENC = False
     return _ENC
 
 
 def count_tokens(text: str) -> int:
-    """估算字符串占用的 token 数。失败时按 1 token ≈ 2 字符兜底。"""
+    """估算文本 token 数（用于历史截断预算）。
+
+    若 tiktoken 不可用或编码失败，按「约 2 字符 = 1 token」兜底，避免阻塞主流程。
+
+    Args:
+        text: 任意字符串。
+
+    Returns:
+        非负整数 token 估计值。
+    """
     if not text:
         return 0
     enc = _get_encoder()
@@ -63,22 +71,16 @@ def count_tokens(text: str) -> int:
         return max(1, len(text) // 2)
 
 
-# ----- Memory 数据结构 -----
-
-
 @dataclass
 class MemoryMessage:
-    """LLM 视角的一条历史消息（只包含 role 和 content）。"""
+    """单条可送入 LLM 历史槽位的消息（与 ORM ``Message`` 解耦，仅 role + content）。"""
 
     role: str
     content: str
 
     def tokens(self) -> int:
-        # 4 token 的固定开销留给 chat-completion 的 role/分隔符等元数据
+        """本条消息估算 token：正文 + 少量协议开销（role 分隔等）。"""
         return count_tokens(self.content) + 4
-
-
-# ----- 加载历史 -----
 
 
 def load_recent_messages(
@@ -88,18 +90,21 @@ def load_recent_messages(
     *,
     exclude_pending_user: bool = True,
 ) -> List[MemoryMessage]:
-    """从 DB 加载某个 session 的最近 N 条历史消息（按时间升序返回）。
+    """从数据库加载指定会话的最近若干条 user/assistant 消息（时间升序）。
+
+    **为何排除末尾 user（可选）**：路由在调用编排层之前通常已把「本轮用户
+    输入」写入 ``messages`` 表。若此处不把最后一条 user 从历史中剔除，则
+    ``prompt_builder`` 最终再追加一条 user 时会出现**同一句用户话重复两次**，
+    既浪费 token 又可能干扰模型。因此 ``exclude_pending_user=True`` 为默认。
 
     Args:
-        db: SQLAlchemy session。
-        session_id: 必填，严格按 session 隔离，禁止跨 session 共享。
-        max_messages: 最多回放多少条（仅统计 user/assistant 角色）。
-        exclude_pending_user: 若最末一条是 user 消息（即"用户刚刚发出、正在被
-            回答"的那条），则不计入历史 —— 因为它会作为最终的 user prompt
-            单独追加，避免重复。
+        db: 数据库会话。
+        session_id: 会话主键（隔离边界）。
+        max_messages: 最多保留多少条历史（仅 user/assistant）。
+        exclude_pending_user: 为 True 时，若最后一条是 user 则先去掉再取最近 N 条。
 
     Returns:
-        按时间升序的 MemoryMessage 列表（最旧→最新）。
+        ``MemoryMessage`` 列表，从旧到新排序。
     """
     if max_messages <= 0:
         return []
@@ -117,20 +122,25 @@ def load_recent_messages(
     if exclude_pending_user and rows[-1].role == "user":
         rows = rows[:-1]
 
-    # 取最近 max_messages 条
     rows = rows[-max_messages:]
     return [MemoryMessage(role=r.role, content=r.content or "") for r in rows]
-
-
-# ----- token 预算截断 -----
 
 
 def truncate_by_tokens(
     history: List[MemoryMessage], budget_tokens: int
 ) -> List[MemoryMessage]:
-    """从最旧端向最新端丢弃消息，直到剩余 token 总数 <= budget_tokens。
+    """在总 token 不超过 ``budget_tokens`` 的前提下，保留**时间上靠后**的历史。
 
-    保留时间顺序；预算非正时直接返回空列表。
+    策略：从列表头部（最旧消息）开始逐条弹出，直到剩余总和 ≤ 预算；若预算
+    ≤0 或历史为空则返回空列表。这样保证「当前轮」在 ``prompt_builder`` 里
+    单独占用的 system + user（含 RAG CONTEXT）优先不被挤掉。
+
+    Args:
+        history: 时间升序的历史消息列表。
+        budget_tokens: 允许历史部分占用的最大 token 数。
+
+    Returns:
+        截断后的列表，仍为时间升序。
     """
     if budget_tokens <= 0 or not history:
         return []
@@ -139,7 +149,6 @@ def truncate_by_tokens(
     if total <= budget_tokens:
         return list(history)
 
-    # 从最早消息开始丢，直到满足预算
     kept = list(history)
     while kept and total > budget_tokens:
         dropped = kept.pop(0)
@@ -147,19 +156,24 @@ def truncate_by_tokens(
     return kept
 
 
-# ----- 检索查询构造 -----
-
-
 def build_retrieval_query(
     current_message: str, history: List[MemoryMessage]
 ) -> str:
-    """根据"当前问题 + 最近一轮 user 消息"组合出更稳的检索查询。
+    """构造向量检索用的查询字符串（**不是**整段 prompt）。
 
-    用整段历史去做 embedding 容易引入噪声（话题漂移、token 浪费、上下文重要
-    度被稀释），因此这里只引入"最近一次 user 提问"作为补充上下文。
+    若把多轮闲聊全文都塞进 embedding，向量会被无关词稀释，召回变差。因此
+    只拼接「**时间顺序上最近的一条 user 内容**」与「当前用户输入」；若二者
+    相同（例如连续两条都是当前句）则只返回当前句。
+
+    典型追问场景：上一轮问「产品支持哪些格式？」本轮问「那 PDF 呢？」——
+    组合后检索能同时携带主题锚点与细化条件。
+
+    Args:
+        current_message: 本轮用户原始输入。
+        history: 已加载且已排除「待回答 user」的历史（见 ``load_recent_messages``）。
 
     Returns:
-        最终用于向量检索的 query 字符串。
+        送入 ``retrieve`` / ``embed_one`` 的查询文本。
     """
     current = (current_message or "").strip()
     last_user_content: Optional[str] = None
@@ -168,6 +182,6 @@ def build_retrieval_query(
             last_user_content = m.content.strip()
             break
     if last_user_content and last_user_content != current:
-        # 最近一轮提问放前面作为"话题锚点"，当前问题置于末尾突出。
+        # 上一轮放前作锚点，当前放后突出本轮焦点
         return f"{last_user_content}\n{current}"
     return current

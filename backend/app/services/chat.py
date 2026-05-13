@@ -1,11 +1,22 @@
-"""Chat orchestration: 装配 memory + retrieval + prompt + LLM。
+"""对话编排服务：串联 Memory、检索、Prompt 构建与大模型调用。
 
-本模块只编排流程，不做 prompt 拼接（→ prompt_builder）或历史加载（→
-memory_service）。两种调用入口：
-- ``answer_question``        非流式，一次性返回 (answer, used_rag, sources, notice)
-- ``answer_question_stream`` SSE 流式，按事件 (meta / delta / final) 产出。
+**模块定位**
+- 本文件只做「流程编排」，不直接拼接 prompt 字符串（见 ``prompt_builder``）；
+- 不直接写复杂 SQL 读历史（见 ``memory_service``）；
+- 路由层（``routers/chat``）负责 HTTP、事务边界与 SSE 帧格式，本层不关心传输细节。
 
-两者共享同一个"计划阶段" :func:`_plan_answer`，确保行为完全一致。
+**两条对外入口（行为必须一致）**
+1. ``answer_question``：同步一次性返回完整回复，供 ``POST /api/chat`` 使用；
+2. ``answer_question_stream``：生成器流式产出事件元组，供 ``POST /api/chat/stream`` 包装为 SSE。
+
+二者在调用 LLM 之前共享 ``_plan_answer``，确保「是否 RAG / sources / notice /
+messages」完全一致，避免流式与非流式行为分叉。
+
+**RAG 与降级（摘要）**
+- 仅当 ``session.chat_mode == rag`` 且绑定有效知识库时才发起向量检索；
+- 知识库已软删：不检索，``notice`` 提示前端，走普通聊天；
+- 检索异常：静默降级为无命中；
+- 全部 chunk 分数低于 ``RAG_SCORE_THRESHOLD``：视为未命中，走普通聊天、``sources`` 为空。
 """
 from __future__ import annotations
 
@@ -31,15 +42,15 @@ from .retrieval import RetrievedChunk, retrieve
 
 logger = logging.getLogger(__name__)
 
-
-PREVIEW_LEN = 240  # sources 预览文本截断长度
-
-
-# ============ Source 转换 ============
+PREVIEW_LEN = 240  # 前端 ``content_preview`` 最大展示长度（字符）
 
 
 def _to_sources(chunks: List[RetrievedChunk]) -> List[Source]:
-    """把检索结果转换为可暴露给前端的 Source 对象（带预览）。"""
+    """将检索命中块转为 API 层的 ``Source`` 列表（含预览文本，禁止伪造字段）。
+
+    ``filename`` / ``chunk_index`` / ``score`` / ``document_id`` / ``knowledge_base_id``
+    均来自数据库与检索结果，不由模型生成。
+    """
     out: List[Source] = []
     for c in chunks:
         preview = c.content.strip().replace("\n", " ")
@@ -58,12 +69,9 @@ def _to_sources(chunks: List[RetrievedChunk]) -> List[Source]:
     return out
 
 
-# ============ "计划"阶段：内部数据结构 ============
-
-
 @dataclass
 class _AnswerPlan:
-    """一次回答所需的全部素材：最终 LLM messages、命中 sources、提示信息等。"""
+    """单次回答的「计划结果」：已拼好的 LLM 输入、对外 sources、提示等。"""
 
     prompt: BuiltPrompt
     sources: List[Source]
@@ -75,25 +83,35 @@ class _AnswerPlan:
 def _plan_answer(
     db: Session, session: ChatSession, user_message: str
 ) -> _AnswerPlan:
-    """根据 session 状态 + 用户问题，准备好送往 LLM 的全部内容。
+    """核心编排：加载记忆 → 条件检索 → 构建 prompt。
 
-    流程：
-        1) 加载 session 的最近历史 memory（按 token 与条数预算）；
-        2) 若 session 绑定 RAG：构造检索 query（current + last user），过滤命中；
-        3) 调用 prompt_builder 生成最终 messages。
+    详细步骤：
+    1. **Memory**：按 ``MAX_HISTORY_MESSAGES`` 读取当前会话最近 user/assistant，
+       并默认剔除「刚写入 DB、本轮待回答」的那条 user，避免与最终 user 重复；
+    2. **RAG 意图**：仅 ``chat_mode=rag`` 且 ``knowledge_base_id`` 非空时尝试检索；
+       若知识库记录不存在或已软删，设置 ``notice`` 并跳过检索；
+    3. **检索 query**：``build_retrieval_query(本轮, history)``，不把整段历史塞进 embedding；
+    4. **阈值过滤**：低于 ``RAG_SCORE_THRESHOLD`` 的 chunk 全部丢弃 → ``used_rag=False``；
+    5. **Prompt**：调用 ``build_chat_prompt``，在 ``MAX_CONTEXT_TOKENS`` 内截断历史。
+
+    Args:
+        db: 与当前请求或流式阶段绑定的 SQLAlchemy Session（由调用方保证生命周期）。
+        session: 当前会话 ORM 对象（须已绑定到 ``db``）。
+        user_message: 本轮用户文本。
+
+    Returns:
+        ``_AnswerPlan``，供同步或流式 LLM 调用共用。
     """
     settings = get_settings()
     notice: str | None = None
 
-    # ---- 1. Memory：加载该 session 的最近历史（严格按 session 隔离）
     history = load_recent_messages(
         db,
         session.id,
         max_messages=settings.max_history_messages,
-        exclude_pending_user=True,  # 当前正在被回答的 user 消息已在 DB，但不应重复进历史
+        exclude_pending_user=True,
     )
 
-    # ---- 2. RAG 判定 + 检索
     use_rag_intent = (
         session.chat_mode == ChatMode.rag and session.knowledge_base_id is not None
     )
@@ -123,7 +141,6 @@ def _plan_answer(
     use_rag = bool(relevant)
     sources = _to_sources(relevant) if use_rag else []
 
-    # ---- 3. Prompt 拼接（含 token 预算控制 + 注入防护）
     prompt = build_chat_prompt(
         user_message=user_message,
         history=history,
@@ -148,19 +165,13 @@ def _plan_answer(
     )
 
 
-# ============ 对外入口：非流式 ============
-
-
 def answer_question(
     db: Session, session: ChatSession, user_message: str
 ) -> Tuple[str, bool, List[Source], str | None]:
-    """一次性回答。返回 (answer, used_rag, sources, notice)。"""
+    """非流式：返回 ``(助手全文, 是否启用RAG, 引用列表, 可选提示)``。"""
     plan = _plan_answer(db, session, user_message)
     answer = get_llm().chat(plan.prompt.messages)
     return answer, plan.used_rag, plan.sources, plan.notice
-
-
-# ============ 对外入口：流式 (SSE) ============
 
 
 StreamEvent = Tuple[str, dict]
@@ -169,12 +180,14 @@ StreamEvent = Tuple[str, dict]
 def answer_question_stream(
     db: Session, session: ChatSession, user_message: str
 ) -> Generator[StreamEvent, None, None]:
-    """流式回答。
+    """流式：先产出 meta（含 sources），再多次 delta，最后一条 final 为全文拼接结果。
 
-    yields:
-      - ("meta",  {"used_rag", "sources", "notice"})  仅一次，token 开始前
-      - ("delta", {"content": str})                   每个 token 块一次
-      - ("final", {"content": str})                   仅一次，完整拼接文本
+    路由层负责把事件转为 SSE；本函数只产出 Python 元组 ``(event_name, payload)``。
+
+    Yields:
+        - ``("meta", {"used_rag", "sources", "notice"})``：一次，在首个 token 前；
+        - ``("delta", {"content": str})``：零次或多次；
+        - ``("final", {"content": str})``：一次，``content`` 为完整助手回复（用于校验/落库）。
     """
     plan = _plan_answer(db, session, user_message)
 
@@ -195,11 +208,11 @@ def answer_question_stream(
     yield ("final", {"content": "".join(parts)})
 
 
-# ============ 标题生成（独立的小调用，不走 memory） ============
-
-
 def generate_title(first_user_message: str) -> str:
-    """根据首条用户消息生成会话标题。LLM 调用失败时降级为消息截断。"""
+    """根据会话首条用户消息生成短标题；LLM 失败时截取首行作为兜底。
+
+    不走 memory / RAG，仅独立一次短补全调用。
+    """
     fallback = first_user_message.strip().splitlines()[0][:40] or "新会话"
     try:
         prompt = (

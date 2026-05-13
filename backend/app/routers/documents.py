@@ -1,3 +1,8 @@
+"""文档上传与列表、软删除。
+
+文档必须归属某个知识库（``knowledge_base_id``）。上传后写入磁盘与 DB 记录，
+由 ``BackgroundTasks`` 异步调用 ``process_document`` 完成解析与向量化。列表
+支持按 ``knowledge_base_id`` 过滤。删除为软删除并标记关联 chunk。"""
 from __future__ import annotations
 
 import uuid
@@ -38,6 +43,10 @@ async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
+    """multipart 上传：表单字段 ``knowledge_base_id`` + 文件 ``file``。
+
+    校验 KB 存在 → 校验文件 → 落盘 → 插入 ``uploaded`` 状态记录 → 投递后台索引任务。
+    """
     kb = db.get(KnowledgeBase, knowledge_base_id)
     if kb is None or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
@@ -71,6 +80,7 @@ def list_documents(
     knowledge_base_id: Optional[uuid.UUID] = Query(default=None),
     db: Session = Depends(get_db),
 ) -> List[DocumentOut]:
+    """文档列表；传 ``knowledge_base_id`` 时仅返回该库下未软删文档。"""
     q = db.query(Document).filter(Document.status != DocumentStatus.deleted)
     if knowledge_base_id is not None:
         q = q.filter(Document.knowledge_base_id == knowledge_base_id)
@@ -84,6 +94,7 @@ def list_documents(
     response_class=Response,
 )
 def delete_document(document_id: uuid.UUID) -> Response:
+    """软删除文档及其 chunk；204 无响应体（满足 FastAPI 对 204 的约束）。"""
     ok = soft_delete_document(document_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")

@@ -1,3 +1,9 @@
+"""FastAPI 应用入口。
+
+组装：日志、CORS、全局异常处理、各业务路由；在 ``startup`` 事件中初始化数据库
+（扩展 + 建表）。业务逻辑均在 ``routers`` 与 ``services`` 中实现，本文件保持
+精简。
+"""
 from __future__ import annotations
 
 import logging
@@ -38,4 +44,5 @@ app.include_router(documents.router)
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """应用进程启动时执行：创建 pgvector 扩展与 ORM 表（若不存在）。"""
     init_db()

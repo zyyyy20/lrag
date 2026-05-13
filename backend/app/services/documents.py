@@ -1,4 +1,15 @@
-"""Document ingestion pipeline: parse -> chunk -> embed -> index."""
+"""文档上传、解析、分块、向量化入库与软删除流水线。
+
+职责划分：
+- ``validate_upload``：扩展名、大小、文件名安全校验；
+- ``save_upload``：将原始字节落盘到 ``UPLOAD_DIR``，文件名加 UUID 前缀防冲突；
+- ``process_document``：后台任务入口——抽取全文、切块、批量 embedding、写入
+  ``document_chunks`` 并更新文档状态；
+- ``soft_delete_document`` / ``soft_delete_documents_under_kb``：软删除文档与
+  chunk（标记 ``is_deleted``），并尽力删除磁盘文件。
+
+状态机：``uploaded`` → ``processing`` → ``indexed`` 或 ``failed``；删除后为 ``deleted``。
+"""
 from __future__ import annotations
 
 import logging
@@ -20,10 +31,27 @@ logger = logging.getLogger(__name__)
 
 
 class UploadValidationError(ValueError):
+    """上传校验失败时抛出的业务异常（路由层会转为 HTTP 400）。"""
+
     pass
 
 
 def validate_upload(file: UploadFile, size_bytes: int) -> None:
+    """校验上传文件是否允许接收。
+
+    检查项：
+    - 非空文件；
+    - 不超过 ``MAX_UPLOAD_MB``；
+    - 扩展名在 ``SUPPORTED_EXTENSIONS`` 内；
+    - 文件名不含路径穿越字符。
+
+    Args:
+        file: FastAPI 包装的 multipart 文件对象。
+        size_bytes: 已读入内存的字节数。
+
+    Raises:
+        UploadValidationError: 任一检查不通过。
+    """
     settings = get_settings()
     max_bytes = settings.max_upload_mb * 1024 * 1024
     if size_bytes <= 0:
@@ -38,12 +66,20 @@ def validate_upload(file: UploadFile, size_bytes: int) -> None:
         raise UploadValidationError(
             f"Unsupported file type '{ext}'. Allowed: {sorted(SUPPORTED_EXTENSIONS)}"
         )
-    # basic filename sanitization: reject path separators
     if any(sep in name for sep in ("/", "\\", "..")):
         raise UploadValidationError("Invalid filename")
 
 
 def save_upload(file: UploadFile, content: bytes) -> str:
+    """将上传内容写入配置目录下的唯一文件名，返回绝对路径字符串。
+
+    Args:
+        file: 用于读取原始 ``filename`` 的 UploadFile。
+        content: 文件完整字节内容。
+
+    Returns:
+        磁盘上的目标路径（字符串），供 ``Document.file_path`` 持久化。
+    """
     settings = get_settings()
     os.makedirs(settings.upload_dir, exist_ok=True)
     safe_name = Path(file.filename or "upload").name
@@ -53,12 +89,12 @@ def save_upload(file: UploadFile, content: bytes) -> str:
     return str(target)
 
 
-# DashScope's OpenAI-compatible embedding endpoint caps batch size at 10.
-# Keep batch small to remain compatible across OpenAI / DashScope / SiliconFlow.
+# DashScope 等兼容接口对单次 embedding 批量条数有限制，保持较小批次以兼容多供应商
 _EMBED_BATCH = 10
 
 
 def _embed_in_batches(texts: list[str], batch: int = _EMBED_BATCH) -> Iterable[list[float]]:
+    """按批次调用 Embedding API，逐条 yield 向量（与 chunks 顺序一致）。"""
     embedder = get_embedder()
     for i in range(0, len(texts), batch):
         for vec in embedder.embed(texts[i : i + batch]):
@@ -66,8 +102,15 @@ def _embed_in_batches(texts: list[str], batch: int = _EMBED_BATCH) -> Iterable[l
 
 
 def process_document(document_id: uuid.UUID) -> None:
-    """Run extraction, chunking, embedding and indexing for the given document.
-    Designed to be run as a background task. Uses its own DB session."""
+    """异步文档索引主流程：解析 → 分块 → 嵌入 → 写入数据库。
+
+    设计为 FastAPI ``BackgroundTasks`` 调用；内部使用独立 ``session_scope``，
+    避免与请求线程共享 Session。任一步失败会将文档标记为 ``failed`` 并写入
+    截断后的错误信息。
+
+    Args:
+        document_id: 待处理文档主键。
+    """
     settings = get_settings()
     try:
         with session_scope() as db:
@@ -99,7 +142,7 @@ def process_document(document_id: uuid.UUID) -> None:
             doc = db.get(Document, document_id)
             if doc is None or doc.status == DocumentStatus.deleted:
                 return
-            # remove any stale chunks (e.g. from a previous failed run)
+            # 重跑索引前物理删除旧 chunk 行（避免失败重试产生重复）
             db.query(DocumentChunk).filter(
                 DocumentChunk.document_id == document_id
             ).delete(synchronize_session=False)
@@ -129,7 +172,14 @@ def process_document(document_id: uuid.UUID) -> None:
 
 
 def soft_delete_document(document_id: uuid.UUID) -> bool:
-    """Soft-delete a document and its chunks. Returns True on success."""
+    """软删除单个文档及其所有 chunk，并尝试删除磁盘文件。
+
+    Args:
+        document_id: 文档主键。
+
+    Returns:
+        成功标记为删除返回 ``True``；文档不存在或已删除返回 ``False``。
+    """
     now = datetime.now(timezone.utc)
     with session_scope() as db:
         doc = db.get(Document, document_id)
@@ -144,7 +194,6 @@ def soft_delete_document(document_id: uuid.UUID) -> bool:
         )
         doc.status = DocumentStatus.deleted
         doc.deleted_at = now
-        # best-effort remove the underlying file
         try:
             if doc.file_path and os.path.exists(doc.file_path):
                 os.remove(doc.file_path)
@@ -154,8 +203,14 @@ def soft_delete_document(document_id: uuid.UUID) -> bool:
 
 
 def soft_delete_documents_under_kb(knowledge_base_id: uuid.UUID) -> int:
-    """Cascade soft-delete: mark all documents and chunks under a KB as deleted.
-    Returns the number of documents affected."""
+    """软删除某知识库下所有未删文档及其 chunk（删除知识库时级联调用）。
+
+    Args:
+        knowledge_base_id: 知识库主键。
+
+    Returns:
+        受影响的文档数量。
+    """
     now = datetime.now(timezone.utc)
     with session_scope() as db:
         docs = (

@@ -1,3 +1,14 @@
+"""应用配置模块。
+
+通过 Pydantic Settings 从环境变量与多个候选路径下的 ``.env`` 文件加载配置。
+支持在仓库根目录（Docker）或 ``backend/``（PyCharm 工作目录）启动时都能定位到
+同一份 ``.env``。
+
+注意：
+- ``cors_origins`` 在环境变量中以逗号分隔字符串形式存在，避免 pydantic-settings
+  v2 对 ``List[str]`` 先做 JSON 解析导致解析失败；对外通过计算属性暴露为列表。
+- ``get_settings`` 使用 ``lru_cache`` 单例化，进程内只解析一次环境变量。
+"""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -9,15 +20,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _find_env_files() -> tuple[str, ...]:
-    """Look for .env in cwd and up to 3 parent directories.
-    Lets us run from either the repo root (docker) or backend/ (PyCharm)."""
+    """查找可用的 ``.env`` 文件路径列表。
+
+    搜索顺序：
+    1. 当前工作目录及其最多 3 层父目录中的 ``.env``（适配在仓库根执行 uvicorn）；
+    2. 本模块所在包的上级目录（通常为 ``backend/``）及其父目录（仓库根）。
+
+    若均未找到，返回 ``(".env",)`` 作为占位，由 pydantic 按默认行为处理。
+
+    Returns:
+        一个或多个 ``.env`` 绝对路径组成的元组，按发现顺序排列。
+    """
     here = Path.cwd().resolve()
     candidates: list[str] = []
     for d in (here, *here.parents[:3]):
         candidate = d / ".env"
         if candidate.exists():
             candidates.append(str(candidate))
-    # also probe backend/.env relative to this file (works regardless of cwd)
+    # 与当前工作目录无关：根据本文件位置探测 backend/ 与仓库根
     here_module = Path(__file__).resolve().parent.parent
     for d in (here_module, here_module.parent):
         candidate = d / ".env"
@@ -27,7 +47,11 @@ def _find_env_files() -> tuple[str, ...]:
 
 
 class Settings(BaseSettings):
-    """Application configuration loaded from environment variables / .env."""
+    """应用级配置：数据库、LLM、Embedding、RAG、Memory、上传、调试等。
+
+    字段名使用小写蛇形，对应环境变量同名大写（如 ``DATABASE_URL``）。
+    未列出的环境变量会被 ``extra="ignore"`` 忽略，避免误配导致启动失败。
+    """
 
     model_config = SettingsConfigDict(
         env_file=_find_env_files(),
@@ -38,8 +62,7 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     log_level: str = "INFO"
-    # Stored as raw comma-separated string from env to avoid pydantic-settings v2
-    # JSON-decoding complex types. Exposed as a list via cors_origins.
+    # 原始逗号分隔字符串；避免 pydantic-settings v2 将 List 当 JSON 解析失败
     cors_origins_raw: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias=AliasChoices("CORS_ORIGINS", "cors_origins_raw"),
@@ -47,50 +70,49 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://lrag:lrag@localhost:5432/lrag"
 
-    # LLM
+    # ----- LLM（对话生成，OpenAI SDK 兼容 DashScope / DeepSeek 等） -----
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str | None = None
 
-    # Embedding
+    # ----- Embedding（向量检索用） -----
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
     embedding_api_key: str = ""
     embedding_base_url: str | None = None
 
-    # RAG
+    # ----- RAG 切片与检索 -----
     rag_top_k: int = 5
     rag_score_threshold: float = 0.25
     chunk_size: int = 800
     chunk_overlap: int = 120
 
-    # ===== Conversation Memory =====
-    # 单次对话最多回放的历史消息条数（仅统计 user/assistant，system 不计）。
-    # 用于在 LLM prompt 中提供"对话记忆"。
+    # ----- 多轮对话记忆（见 memory_service / prompt_builder） -----
     max_history_messages: int = 10
-    # 一次请求拼接到 LLM 的总输入 token 上限（含 system / 历史 / RAG context /
-    # 当前问题）。超出则按"先丢最早历史"的策略截断。
     max_context_tokens: int = 4000
 
-    # ===== Debug =====
-    # 开启后会在 INFO 日志中打印每次发给 LLM 的完整 messages（结构化、超长字段
-    # 截断）。仅用于调试，生产环境务必关闭以避免 PII 泄露与日志膨胀。
+    # ----- 调试：打印发给 LLM 的 messages（生产务必关闭） -----
     log_llm_messages: bool = False
-    # 每条 message.content 在日志中保留的最大字符数；超出部分用 "…" 省略。
     log_llm_message_max_chars: int = 800
 
-    # Upload
+    # ----- 文件上传 -----
     upload_dir: str = "/app/uploads"
     max_upload_mb: int = 20
 
     @computed_field  # type: ignore[misc]
     @property
     def cors_origins(self) -> List[str]:
+        """解析后的浏览器跨域来源列表，供 FastAPI CORSMiddleware 使用。"""
         return [item.strip() for item in self.cors_origins_raw.split(",") if item.strip()]
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """返回进程内单例 ``Settings`` 实例。
+
+    首次调用时从环境变量与 ``.env`` 加载；之后直接返回缓存结果。
+    单元测试中若需覆盖配置，需先 ``get_settings.cache_clear()`` 再改环境变量。
+    """
     return Settings()

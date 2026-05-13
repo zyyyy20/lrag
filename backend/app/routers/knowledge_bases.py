@@ -1,3 +1,9 @@
+"""知识库（Knowledge Base）管理：增删改查与软删除。
+
+知识库为文档的逻辑容器；删除知识库会级联软删其下文档与 chunk（见
+``services.documents.soft_delete_documents_under_kb``），已有会话记录保留，
+后续对话由编排层检测 KB 已删并降级。
+"""
 from __future__ import annotations
 
 import uuid
@@ -18,6 +24,7 @@ router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge_bases"])
 
 
 def _get_active_kb(db: Session, kb_id: uuid.UUID) -> KnowledgeBase:
+    """获取未软删知识库；否则 404。"""
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
@@ -25,6 +32,7 @@ def _get_active_kb(db: Session, kb_id: uuid.UUID) -> KnowledgeBase:
 
 
 def _to_out(kb: KnowledgeBase, document_count: int) -> KnowledgeBaseOut:
+    """ORM → API 模型，附带未删文档数量。"""
     return KnowledgeBaseOut(
         id=kb.id,
         name=kb.name,
@@ -37,6 +45,7 @@ def _to_out(kb: KnowledgeBase, document_count: int) -> KnowledgeBaseOut:
 
 @router.post("", response_model=KnowledgeBaseOut, status_code=status.HTTP_201_CREATED)
 def create_kb(payload: KnowledgeBaseCreate, db: Session = Depends(get_db)) -> KnowledgeBaseOut:
+    """新建知识库（名称必填，描述可选）。"""
     kb = KnowledgeBase(name=payload.name.strip(), description=payload.description)
     db.add(kb)
     db.commit()
@@ -46,6 +55,7 @@ def create_kb(payload: KnowledgeBaseCreate, db: Session = Depends(get_db)) -> Kn
 
 @router.get("", response_model=List[KnowledgeBaseOut])
 def list_kbs(db: Session = Depends(get_db)) -> List[KnowledgeBaseOut]:
+    """列出未删知识库，并左连接统计各库未删文档数。"""
     count_subq = (
         select(Document.knowledge_base_id, func.count(Document.id).label("cnt"))
         .where(Document.status != DocumentStatus.deleted)
@@ -64,6 +74,7 @@ def list_kbs(db: Session = Depends(get_db)) -> List[KnowledgeBaseOut]:
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
 def get_kb(kb_id: uuid.UUID, db: Session = Depends(get_db)) -> KnowledgeBaseOut:
+    """单个知识库详情（含文档计数）。"""
     kb = _get_active_kb(db, kb_id)
     cnt = (
         db.query(func.count(Document.id))
@@ -83,6 +94,7 @@ def update_kb(
     payload: KnowledgeBaseUpdate,
     db: Session = Depends(get_db),
 ) -> KnowledgeBaseOut:
+    """部分更新名称与/或描述。"""
     kb = _get_active_kb(db, kb_id)
     if payload.name is not None:
         kb.name = payload.name.strip()
@@ -108,12 +120,12 @@ def update_kb(
     response_class=Response,
 )
 def delete_kb(kb_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """软删除知识库并级联软删其下文档与 chunk（独立 session 内执行级联逻辑）。"""
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     kb.is_deleted = True
     kb.deleted_at = datetime.now(timezone.utc)
     db.commit()
-    # cascade soft-delete documents + chunks (uses its own session)
     soft_delete_documents_under_kb(kb_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,4 @@
+"""消息表：会话内的单条 user/assistant 内容及可选 RAG 元数据。"""
 from __future__ import annotations
 
 import uuid
@@ -11,6 +12,8 @@ from ..database import Base
 
 
 class Message(Base):
+    """一条消息。``sources`` 存 JSON（助手消息且 used_rag 时）；记忆模块只读 user/assistant。"""
+
     __tablename__ = "messages"
 
     id: Mapped[uuid.UUID] = mapped_column(

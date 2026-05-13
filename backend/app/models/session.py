@@ -1,3 +1,4 @@
+"""会话表：一条聊天线程，绑定可选知识库与对话模式。"""
 from __future__ import annotations
 
 import enum
@@ -13,11 +14,15 @@ from ..database import Base
 
 
 class ChatMode(str, enum.Enum):
+    """会话模式：普通聊天不检索；RAG 模式仅检索绑定的知识库。"""
+
     general = "general"
     rag = "rag"
 
 
 class Session(Base):
+    """聊天会话。软删除用 ``is_deleted``；消息通过 ``messages`` 级联删除。"""
+
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(

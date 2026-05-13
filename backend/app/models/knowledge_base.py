@@ -1,3 +1,4 @@
+"""知识库表：文档的逻辑分组；软删除后其下文档与 chunk 一并软删。"""
 from __future__ import annotations
 
 import uuid
@@ -12,6 +13,8 @@ from ..database import Base
 
 
 class KnowledgeBase(Base):
+    """知识库实体。会话 RAG 模式通过 ``knowledge_base_id`` 外键引用。"""
+
     __tablename__ = "knowledge_bases"
 
     id: Mapped[uuid.UUID] = mapped_column(

@@ -1,3 +1,4 @@
+"""文档分块表：每块文本 + pgvector 向量；支持软删除不参与检索。"""
 from __future__ import annotations
 
 import uuid
@@ -15,6 +16,8 @@ _settings = get_settings()
 
 
 class DocumentChunk(Base):
+    """向量检索的最小单位。``embedding`` 维度由配置 ``EMBEDDING_DIM`` 决定。"""
+
     __tablename__ = "document_chunks"
 
     id: Mapped[uuid.UUID] = mapped_column(
