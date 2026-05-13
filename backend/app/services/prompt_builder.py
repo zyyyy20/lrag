@@ -13,11 +13,16 @@
 """
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import List, Sequence
 
+from ..config import get_settings
 from .memory_service import MemoryMessage, count_tokens, truncate_by_tokens
 from .retrieval import RetrievedChunk
+
+logger = logging.getLogger(__name__)
 
 
 # ============ System Prompts ============
@@ -131,8 +136,52 @@ def build_chat_prompt(
     messages.append({"role": "user", "content": final_user_content})
 
     estimated = fixed_tokens + sum(m.tokens() for m in kept_history)
+
+    # 调试用：将最终 LLM 输入完整打到日志（受 .env 开关控制）
+    _maybe_log_messages(messages, history_kept=len(kept_history), estimated_tokens=estimated)
+
     return BuiltPrompt(
         messages=messages,
         used_history_count=len(kept_history),
         estimated_input_tokens=estimated,
+    )
+
+
+# ============ 调试日志 ============
+
+
+def _maybe_log_messages(
+    messages: List[dict], *, history_kept: int, estimated_tokens: int
+) -> None:
+    """如果 LOG_LLM_MESSAGES=true，则把发送给 LLM 的完整 messages 打印到日志。
+
+    - 仅在调试场景启用，生产环境关闭以避免 PII 泄露与日志膨胀
+    - 单条 content 超过 max_chars 会被截断，末尾加 "…(truncated, total=N chars)"
+    - 输出是结构化 JSON（紧凑模式按 role 分行），便于复制到 Postman 重放
+    """
+    settings = get_settings()
+    if not settings.log_llm_messages:
+        return
+
+    max_chars = max(100, int(settings.log_llm_message_max_chars))
+    redacted: List[dict] = []
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str) and len(content) > max_chars:
+            redacted.append(
+                {
+                    "role": m.get("role"),
+                    "content": content[:max_chars]
+                    + f"…(truncated, total={len(content)} chars)",
+                }
+            )
+        else:
+            redacted.append({"role": m.get("role"), "content": content})
+
+    pretty = json.dumps(redacted, ensure_ascii=False, indent=2)
+    logger.info(
+        "[LLM messages] history_kept=%d estimated_tokens=%d\n%s",
+        history_kept,
+        estimated_tokens,
+        pretty,
     )

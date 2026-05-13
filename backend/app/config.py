@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     # 当前问题）。超出则按"先丢最早历史"的策略截断。
     max_context_tokens: int = 4000
 
+    # ===== Debug =====
+    # 开启后会在 INFO 日志中打印每次发给 LLM 的完整 messages（结构化、超长字段
+    # 截断）。仅用于调试，生产环境务必关闭以避免 PII 泄露与日志膨胀。
+    log_llm_messages: bool = False
+    # 每条 message.content 在日志中保留的最大字符数；超出部分用 "…" 省略。
+    log_llm_message_max_chars: int = 800
+
     # Upload
     upload_dir: str = "/app/uploads"
     max_upload_mb: int = 20
