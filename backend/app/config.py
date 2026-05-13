@@ -1,17 +1,36 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic import AliasChoices, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _find_env_files() -> tuple[str, ...]:
+    """Look for .env in cwd and up to 3 parent directories.
+    Lets us run from either the repo root (docker) or backend/ (PyCharm)."""
+    here = Path.cwd().resolve()
+    candidates: list[str] = []
+    for d in (here, *here.parents[:3]):
+        candidate = d / ".env"
+        if candidate.exists():
+            candidates.append(str(candidate))
+    # also probe backend/.env relative to this file (works regardless of cwd)
+    here_module = Path(__file__).resolve().parent.parent
+    for d in (here_module, here_module.parent):
+        candidate = d / ".env"
+        if candidate.exists() and str(candidate) not in candidates:
+            candidates.append(str(candidate))
+    return tuple(candidates) or (".env",)
+
+
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables / .env."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_find_env_files(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

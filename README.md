@@ -82,6 +82,10 @@ cp .env.example .env
 
 ```bash
 docker compose up --build
+
+只启动数据库：
+docker-compose -f docker-compose.db.yml up -d
+
 ```
 
 启动后：

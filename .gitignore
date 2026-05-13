@@ -17,7 +17,13 @@ npm-debug.log*
 
 # uploads
 backend/uploads/
+uploads/
 
 # os
 .DS_Store
 Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
