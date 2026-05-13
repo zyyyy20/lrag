@@ -1,62 +1,45 @@
-"""Chat orchestration: history -> retrieval -> LLM."""
+"""Chat orchestration: 装配 memory + retrieval + prompt + LLM。
+
+本模块只编排流程，不做 prompt 拼接（→ prompt_builder）或历史加载（→
+memory_service）。两种调用入口：
+- ``answer_question``        非流式，一次性返回 (answer, used_rag, sources, notice)
+- ``answer_question_stream`` SSE 流式，按事件 (meta / delta / final) 产出。
+
+两者共享同一个"计划阶段" :func:`_plan_answer`，确保行为完全一致。
+"""
 from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Generator, List, Tuple
 
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..models import ChatMode, KnowledgeBase, Message
+from ..models import ChatMode, KnowledgeBase
 from ..models import Session as ChatSession
 from ..schemas.chat import Source
 from .llm import get_llm
+from .memory_service import (
+    MemoryMessage,
+    build_retrieval_query,
+    load_recent_messages,
+)
+from .prompt_builder import BuiltPrompt, build_chat_prompt
 from .retrieval import RetrievedChunk, retrieve
 
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT_BASE = (
-    "You are a concise, helpful assistant. Answer the user clearly. "
-    "Reply in the user's language."
-)
-
-SYSTEM_PROMPT_RAG = (
-    "You are a knowledgeable assistant answering with the help of the provided context. "
-    "Follow these rules strictly:\n"
-    "1. Prefer information from the CONTEXT below. If the context does not contain the "
-    "answer, say so honestly and answer from general knowledge where appropriate.\n"
-    "2. Do NOT fabricate citations or filenames. Only refer to sources that actually appear "
-    "in the CONTEXT.\n"
-    "3. Be concise and accurate. Reply in the user's language."
-)
-
-PREVIEW_LEN = 240
-HISTORY_TURNS = 10
+PREVIEW_LEN = 240  # sources 预览文本截断长度
 
 
-def _history_messages(db: Session, session_id: uuid.UUID) -> List[dict]:
-    rows = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
-        .order_by(Message.created_at.asc())
-        .all()
-    )
-    rows = rows[-HISTORY_TURNS * 2 :]
-    return [{"role": r.role, "content": r.content} for r in rows if r.role in ("user", "assistant")]
-
-
-def _build_context_block(chunks: List[RetrievedChunk]) -> str:
-    parts: List[str] = []
-    for i, c in enumerate(chunks, start=1):
-        parts.append(
-            f"[Source {i}] file={c.filename} chunk={c.chunk_index} score={c.score:.3f}\n{c.content}"
-        )
-    return "\n\n".join(parts)
+# ============ Source 转换 ============
 
 
 def _to_sources(chunks: List[RetrievedChunk]) -> List[Source]:
+    """把检索结果转换为可暴露给前端的 Source 对象（带预览）。"""
     out: List[Source] = []
     for c in chunks:
         preview = c.content.strip().replace("\n", " ")
@@ -75,19 +58,42 @@ def _to_sources(chunks: List[RetrievedChunk]) -> List[Source]:
     return out
 
 
-def answer_question(
-    db: Session, session: ChatSession, user_message: str
-) -> Tuple[str, bool, List[Source], str | None]:
-    """Returns: (answer, used_rag, sources, notice).
+# ============ "计划"阶段：内部数据结构 ============
 
-    The session's chat_mode and knowledge_base_id determine the behavior:
-      - chat_mode == general OR knowledge_base_id is None -> plain chat
-      - chat_mode == rag AND KB exists & not deleted    -> RAG over that KB
-      - chat_mode == rag AND KB missing/deleted         -> plain chat + notice
+
+@dataclass
+class _AnswerPlan:
+    """一次回答所需的全部素材：最终 LLM messages、命中 sources、提示信息等。"""
+
+    prompt: BuiltPrompt
+    sources: List[Source]
+    used_rag: bool
+    notice: str | None
+    history: List[MemoryMessage]
+
+
+def _plan_answer(
+    db: Session, session: ChatSession, user_message: str
+) -> _AnswerPlan:
+    """根据 session 状态 + 用户问题，准备好送往 LLM 的全部内容。
+
+    流程：
+        1) 加载 session 的最近历史 memory（按 token 与条数预算）；
+        2) 若 session 绑定 RAG：构造检索 query（current + last user），过滤命中；
+        3) 调用 prompt_builder 生成最终 messages。
     """
     settings = get_settings()
     notice: str | None = None
 
+    # ---- 1. Memory：加载该 session 的最近历史（严格按 session 隔离）
+    history = load_recent_messages(
+        db,
+        session.id,
+        max_messages=settings.max_history_messages,
+        exclude_pending_user=True,  # 当前正在被回答的 user 消息已在 DB，但不应重复进历史
+    )
+
+    # ---- 2. RAG 判定 + 检索
     use_rag_intent = (
         session.chat_mode == ChatMode.rag and session.knowledge_base_id is not None
     )
@@ -99,43 +105,62 @@ def answer_question(
             notice = "当前会话绑定的知识库已被删除，已自动降级为普通聊天。"
             use_rag_intent = False
         else:
+            retrieval_query = build_retrieval_query(user_message, history)
             try:
                 retrieved = retrieve(
                     db,
-                    user_message,
+                    retrieval_query,
                     knowledge_base_id=session.knowledge_base_id,
                     top_k=settings.rag_top_k,
                 )
             except Exception:
                 logger.exception("Retrieval failed; falling back to plain chat")
                 retrieved = []
-            relevant = [c for c in retrieved if c.score >= settings.rag_score_threshold]
+            relevant = [
+                c for c in retrieved if c.score >= settings.rag_score_threshold
+            ]
 
     use_rag = bool(relevant)
-    history = _history_messages(db, session.id)
+    sources = _to_sources(relevant) if use_rag else []
 
-    if use_rag:
-        context_block = _build_context_block(relevant)
-        user_with_ctx = (
-            f"CONTEXT:\n{context_block}\n\n"
-            f"USER QUESTION:\n{user_message}"
-        )
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_RAG},
-            *history,
-            {"role": "user", "content": user_with_ctx},
-        ]
-        sources = _to_sources(relevant)
-    else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_BASE},
-            *history,
-            {"role": "user", "content": user_message},
-        ]
-        sources = []
+    # ---- 3. Prompt 拼接（含 token 预算控制 + 注入防护）
+    prompt = build_chat_prompt(
+        user_message=user_message,
+        history=history,
+        rag_chunks=relevant if use_rag else None,
+        max_context_tokens=settings.max_context_tokens,
+    )
+    logger.debug(
+        "chat plan: session=%s use_rag=%s history_kept=%d/%d est_tokens=%d",
+        session.id,
+        use_rag,
+        prompt.used_history_count,
+        len(history),
+        prompt.estimated_input_tokens,
+    )
 
-    answer = get_llm().chat(messages)
-    return answer, use_rag, sources, notice
+    return _AnswerPlan(
+        prompt=prompt,
+        sources=sources,
+        used_rag=use_rag,
+        notice=notice,
+        history=history,
+    )
+
+
+# ============ 对外入口：非流式 ============
+
+
+def answer_question(
+    db: Session, session: ChatSession, user_message: str
+) -> Tuple[str, bool, List[Source], str | None]:
+    """一次性回答。返回 (answer, used_rag, sources, notice)。"""
+    plan = _plan_answer(db, session, user_message)
+    answer = get_llm().chat(plan.prompt.messages)
+    return answer, plan.used_rag, plan.sources, plan.notice
+
+
+# ============ 对外入口：流式 (SSE) ============
 
 
 StreamEvent = Tuple[str, dict]
@@ -144,82 +169,38 @@ StreamEvent = Tuple[str, dict]
 def answer_question_stream(
     db: Session, session: ChatSession, user_message: str
 ) -> Generator[StreamEvent, None, None]:
-    """Streaming variant of answer_question.
+    """流式回答。
 
-    Yields events of the form (event_name, payload):
-      - ("meta",  {"used_rag", "sources", "notice"})  — emitted exactly once before any deltas
-      - ("delta", {"content": str})                   — emitted many times as tokens arrive
-      - ("final", {"content": str})                   — emitted once at end with full assembled text
+    yields:
+      - ("meta",  {"used_rag", "sources", "notice"})  仅一次，token 开始前
+      - ("delta", {"content": str})                   每个 token 块一次
+      - ("final", {"content": str})                   仅一次，完整拼接文本
     """
-    settings = get_settings()
-    notice: str | None = None
-
-    use_rag_intent = (
-        session.chat_mode == ChatMode.rag and session.knowledge_base_id is not None
-    )
-
-    relevant: List[RetrievedChunk] = []
-    if use_rag_intent:
-        kb = db.get(KnowledgeBase, session.knowledge_base_id)
-        if kb is None or kb.is_deleted:
-            notice = "当前会话绑定的知识库已被删除，已自动降级为普通聊天。"
-            use_rag_intent = False
-        else:
-            try:
-                retrieved = retrieve(
-                    db,
-                    user_message,
-                    knowledge_base_id=session.knowledge_base_id,
-                    top_k=settings.rag_top_k,
-                )
-            except Exception:
-                logger.exception("Retrieval failed; falling back to plain chat")
-                retrieved = []
-            relevant = [c for c in retrieved if c.score >= settings.rag_score_threshold]
-
-    use_rag = bool(relevant)
-    sources = _to_sources(relevant) if use_rag else []
-    history = _history_messages(db, session.id)
-
-    if use_rag:
-        context_block = _build_context_block(relevant)
-        user_with_ctx = (
-            f"CONTEXT:\n{context_block}\n\n"
-            f"USER QUESTION:\n{user_message}"
-        )
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_RAG},
-            *history,
-            {"role": "user", "content": user_with_ctx},
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_BASE},
-            *history,
-            {"role": "user", "content": user_message},
-        ]
+    plan = _plan_answer(db, session, user_message)
 
     yield (
         "meta",
         {
-            "used_rag": use_rag,
-            "sources": [s.model_dump(mode="json") for s in sources],
-            "notice": notice,
+            "used_rag": plan.used_rag,
+            "sources": [s.model_dump(mode="json") for s in plan.sources],
+            "notice": plan.notice,
         },
     )
 
     parts: List[str] = []
-    for delta in get_llm().chat_stream(messages):
+    for delta in get_llm().chat_stream(plan.prompt.messages):
         parts.append(delta)
         yield ("delta", {"content": delta})
 
     yield ("final", {"content": "".join(parts)})
 
 
+# ============ 标题生成（独立的小调用，不走 memory） ============
+
+
 def generate_title(first_user_message: str) -> str:
-    """Generate a short title for a session. Falls back to a truncated version of the
-    user message if the LLM call fails."""
-    fallback = first_user_message.strip().splitlines()[0][:40] or "New chat"
+    """根据首条用户消息生成会话标题。LLM 调用失败时降级为消息截断。"""
+    fallback = first_user_message.strip().splitlines()[0][:40] or "新会话"
     try:
         prompt = (
             "Generate a short, descriptive title (max 6 words, no quotes, no trailing "

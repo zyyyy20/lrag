@@ -174,6 +174,35 @@ CHUNK_OVERLAP=120
 
 ---
 
+## 多轮对话记忆（Conversation Memory）
+
+每次回答都会按 session 维度自动加载历史消息作为 LLM 的"对话记忆"。三个独立
+模块各司其职：
+
+- `services/memory_service.py`：按 session 加载最近历史、token 截断、构造检索查询
+- `services/prompt_builder.py`：把 system / history / RAG context / 当前问题
+  安全地拼接为 LLM messages（含 prompt-injection 防护：角色白名单 +
+  system 规则注入）
+- `services/chat.py`：编排上述两者 + 检索 + LLM 调用（流式 / 非流式共用）
+
+关键约束：
+- **Memory 严格按 session 隔离**，删除 session 后随消息一起失效，不会跨 session 共享
+- **token 预算**：`MAX_CONTEXT_TOKENS` 控制总输入 token；优先保证 system /
+  RAG context / 当前问题，剩余预算分配给历史，按"最早→最近"顺序丢弃
+- **检索查询**：使用 `当前问题 + 最近一轮 user 消息` 作为 query，避免整段
+  历史进入 embedding 带来话题噪声
+- **不允许伪造引用**：system prompt 中明确禁止虚构 filename / chunk，sources
+  全部来自实际命中的 chunks
+
+可调参数：
+
+```
+MAX_HISTORY_MESSAGES=10   # 最多回放的历史条数
+MAX_CONTEXT_TOKENS=4000   # 一次请求的总输入 token 上限
+```
+
+---
+
 ## 验收对照
 
 - [x] 不上传文档时可以正常聊天（降级路径）

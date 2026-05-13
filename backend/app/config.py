@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 120
 
+    # ===== Conversation Memory =====
+    # 单次对话最多回放的历史消息条数（仅统计 user/assistant，system 不计）。
+    # 用于在 LLM prompt 中提供"对话记忆"。
+    max_history_messages: int = 10
+    # 一次请求拼接到 LLM 的总输入 token 上限（含 system / 历史 / RAG context /
+    # 当前问题）。超出则按"先丢最早历史"的策略截断。
+    max_context_tokens: int = 4000
+
     # Upload
     upload_dir: str = "/app/uploads"
     max_upload_mb: int = 20
