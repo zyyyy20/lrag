@@ -6,15 +6,18 @@ import type {
   SessionDetail,
   SessionItem,
 } from "./types";
+import { getDebugGuestHeaders } from "./guest";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE) ||
   "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const guestHeaders = await getDebugGuestHeaders();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
+      ...guestHeaders,
       ...(init?.body && !(init.body instanceof FormData)
         ? { "Content-Type": "application/json" }
         : {}),
@@ -132,9 +135,11 @@ async function chatStream(
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
+  const guestHeaders = await getDebugGuestHeaders();
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
     headers: {
+      ...guestHeaders,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },

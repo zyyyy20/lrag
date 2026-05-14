@@ -117,7 +117,14 @@ def _plan_answer(
 
     relevant: List[RetrievedChunk] = []
     if use_rag_intent:
-        kb = db.get(KnowledgeBase, session.knowledge_base_id)
+        kb = (
+            db.query(KnowledgeBase)
+            .filter(
+                KnowledgeBase.id == session.knowledge_base_id,
+                KnowledgeBase.user_id == session.user_id,
+            )
+            .one_or_none()
+        )
         if kb is None or kb.is_deleted:
             notice = "当前会话绑定的知识库已被删除，已自动降级为普通聊天。"
             use_rag_intent = False
@@ -128,6 +135,7 @@ def _plan_answer(
                     db,
                     retrieval_query,
                     knowledge_base_id=session.knowledge_base_id,
+                    user_id=session.user_id,
                     top_k=settings.rag_top_k,
                 )
             except Exception:

@@ -22,7 +22,8 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Document, DocumentStatus, KnowledgeBase
+from ..dependencies.auth import get_current_user
+from ..models import Document, DocumentStatus, KnowledgeBase, User
 from ..schemas import DocumentOut
 from ..services.documents import (
     UploadValidationError,
@@ -41,12 +42,20 @@ async def upload_document(
     knowledge_base_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentOut:
     """multipart 上传：表单字段 ``knowledge_base_id`` + 文件 ``file``。
 
     校验 KB 存在 → 校验文件 → 落盘 → 插入 ``uploaded`` 状态记录 → 投递后台索引任务。
     """
-    kb = db.get(KnowledgeBase, knowledge_base_id)
+    kb = (
+        db.query(KnowledgeBase)
+        .filter(
+            KnowledgeBase.id == knowledge_base_id,
+            KnowledgeBase.user_id == current_user.id,
+        )
+        .one_or_none()
+    )
     if kb is None or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
@@ -58,6 +67,7 @@ async def upload_document(
 
     stored_path = save_upload(file, content)
     doc = Document(
+        user_id=current_user.id,
         knowledge_base_id=knowledge_base_id,
         filename=file.filename or "upload",
         content_type=file.content_type or "application/octet-stream",
@@ -78,9 +88,13 @@ async def upload_document(
 def list_documents(
     knowledge_base_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> List[DocumentOut]:
     """文档列表；传 ``knowledge_base_id`` 时仅返回该库下未软删文档。"""
-    q = db.query(Document).filter(Document.status != DocumentStatus.deleted)
+    q = db.query(Document).filter(
+        Document.status != DocumentStatus.deleted,
+        Document.user_id == current_user.id,
+    )
     if knowledge_base_id is not None:
         q = q.filter(Document.knowledge_base_id == knowledge_base_id)
     rows = q.order_by(Document.created_at.desc()).all()
@@ -92,9 +106,12 @@ def list_documents(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_document(document_id: int) -> Response:
+def delete_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+) -> Response:
     """软删除文档及其 chunk；204 无响应体（满足 FastAPI 对 204 的约束）。"""
-    ok = soft_delete_document(document_id)
+    ok = soft_delete_document(document_id, current_user.id)
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

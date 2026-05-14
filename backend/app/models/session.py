@@ -26,6 +26,12 @@ class Session(Base):
     id: Mapped[int] = mapped_column(
         Integer, Identity(always=False), primary_key=True
     )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="新会话")
     chat_mode: Mapped[ChatMode] = mapped_column(
         Enum(ChatMode, name="chat_mode"),
@@ -56,3 +62,4 @@ class Session(Base):
         order_by="Message.created_at",
     )
     knowledge_base = relationship("KnowledgeBase")
+    user = relationship("User", back_populates="sessions")

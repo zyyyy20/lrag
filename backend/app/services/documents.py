@@ -171,7 +171,7 @@ def process_document(document_id: int) -> None:
                 doc.error = str(e)[:1000]
 
 
-def soft_delete_document(document_id: int) -> bool:
+def soft_delete_document(document_id: int, user_id: int) -> bool:
     """软删除单个文档及其所有 chunk，并尝试删除磁盘文件。
 
     Args:
@@ -182,7 +182,11 @@ def soft_delete_document(document_id: int) -> bool:
     """
     now = datetime.now(timezone.utc)
     with session_scope() as db:
-        doc = db.get(Document, document_id)
+        doc = (
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == user_id)
+            .one_or_none()
+        )
         if doc is None or doc.status == DocumentStatus.deleted:
             return False
         db.query(DocumentChunk).filter(
@@ -202,7 +206,7 @@ def soft_delete_document(document_id: int) -> bool:
         return True
 
 
-def soft_delete_documents_under_kb(knowledge_base_id: int) -> int:
+def soft_delete_documents_under_kb(knowledge_base_id: int, user_id: int) -> int:
     """软删除某知识库下所有未删文档及其 chunk（删除知识库时级联调用）。
 
     Args:
@@ -217,6 +221,7 @@ def soft_delete_documents_under_kb(knowledge_base_id: int) -> int:
             db.query(Document)
             .filter(
                 Document.knowledge_base_id == knowledge_base_id,
+                Document.user_id == user_id,
                 Document.status != DocumentStatus.deleted,
             )
             .all()

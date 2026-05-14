@@ -18,6 +18,12 @@ class Message(Base):
     id: Mapped[int] = mapped_column(
         Integer, Identity(always=False), primary_key=True
     )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     session_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("sessions.id", ondelete="CASCADE"),
@@ -33,3 +39,4 @@ class Message(Base):
     )
 
     session = relationship("Session", back_populates="messages")
+    user = relationship("User", back_populates="messages")

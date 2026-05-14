@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import Boolean, DateTime, Identity, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Identity, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -17,6 +17,12 @@ class KnowledgeBase(Base):
 
     id: Mapped[int] = mapped_column(
         Integer, Identity(always=False), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -40,3 +46,4 @@ class KnowledgeBase(Base):
         "Document",
         back_populates="knowledge_base",
     )
+    user = relationship("User", back_populates="knowledge_bases")

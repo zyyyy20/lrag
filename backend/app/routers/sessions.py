@@ -12,18 +12,23 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ChatMode, KnowledgeBase, Message
+from ..dependencies.auth import get_current_user
+from ..models import ChatMode, KnowledgeBase, Message, User
 from ..models import Session as ChatSession
 from ..schemas import MessageOut, SessionCreate, SessionDetail, SessionOut
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-def _kb_name(db: Session, kb_id: int | None) -> str | None:
+def _kb_name(db: Session, kb_id: int | None, user_id: int) -> str | None:
     """解析知识库显示名；若 KB 已删或不存在则返回 ``None``（前端可不展示）。"""
     if kb_id is None:
         return None
-    kb = db.get(KnowledgeBase, kb_id)
+    kb = (
+        db.query(KnowledgeBase)
+        .filter(KnowledgeBase.id == kb_id, KnowledgeBase.user_id == user_id)
+        .one_or_none()
+    )
     return kb.name if kb is not None else None
 
 
@@ -34,7 +39,7 @@ def _to_out(db: Session, s: ChatSession) -> SessionOut:
         title=s.title,
         chat_mode=s.chat_mode,
         knowledge_base_id=s.knowledge_base_id,
-        knowledge_base_name=_kb_name(db, s.knowledge_base_id),
+        knowledge_base_name=_kb_name(db, s.knowledge_base_id, s.user_id),
         created_at=s.created_at,
         updated_at=s.updated_at,
     )
@@ -42,7 +47,9 @@ def _to_out(db: Session, s: ChatSession) -> SessionOut:
 
 @router.post("", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def create_session(
-    payload: SessionCreate | None = None, db: Session = Depends(get_db)
+    payload: SessionCreate | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SessionOut:
     """创建新会话。
 
@@ -59,14 +66,26 @@ def create_session(
                 status_code=400,
                 detail="knowledge_base_id is required when chat_mode is 'rag'",
             )
-        kb = db.get(KnowledgeBase, kb_id)
+        kb = (
+            db.query(KnowledgeBase)
+            .filter(
+                KnowledgeBase.id == kb_id,
+                KnowledgeBase.user_id == current_user.id,
+            )
+            .one_or_none()
+        )
         if kb is None or kb.is_deleted:
             raise HTTPException(status_code=404, detail="Knowledge base not found")
     else:
         kb_id = None
 
     title = (payload.title or "新会话").strip() or "新会话"
-    s = ChatSession(title=title, chat_mode=chat_mode, knowledge_base_id=kb_id)
+    s = ChatSession(
+        user_id=current_user.id,
+        title=title,
+        chat_mode=chat_mode,
+        knowledge_base_id=kb_id,
+    )
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -74,11 +93,17 @@ def create_session(
 
 
 @router.get("", response_model=List[SessionOut])
-def list_sessions(db: Session = Depends(get_db)) -> List[SessionOut]:
+def list_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> List[SessionOut]:
     """列出未软删会话，按 ``updated_at`` 倒序（最近活跃在前）。"""
     rows = (
         db.query(ChatSession)
-        .filter(ChatSession.is_deleted.is_(False))
+        .filter(
+            ChatSession.is_deleted.is_(False),
+            ChatSession.user_id == current_user.id,
+        )
         .order_by(ChatSession.updated_at.desc())
         .all()
     )
@@ -86,9 +111,17 @@ def list_sessions(db: Session = Depends(get_db)) -> List[SessionOut]:
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-def get_session(session_id: int, db: Session = Depends(get_db)) -> SessionDetail:
+def get_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SessionDetail:
     """会话详情：含全部消息（前端用于刷新后恢复历史）。"""
-    s = db.get(ChatSession, session_id)
+    s = (
+        db.query(ChatSession)
+        .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+        .one_or_none()
+    )
     if s is None or s.is_deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     out = _to_out(db, s)
@@ -103,9 +136,17 @@ def get_session(session_id: int, db: Session = Depends(get_db)) -> SessionDetail
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_session(session_id: int, db: Session = Depends(get_db)) -> Response:
+def delete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
     """软删除会话（``is_deleted=True``）；消息随 ORM 级联删除。"""
-    s = db.get(ChatSession, session_id)
+    s = (
+        db.query(ChatSession)
+        .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+        .one_or_none()
+    )
     if s is None or s.is_deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     s.is_deleted = True
