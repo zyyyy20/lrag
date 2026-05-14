@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import List
 
@@ -23,7 +22,7 @@ from ..services.documents import soft_delete_documents_under_kb
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge_bases"])
 
 
-def _get_active_kb(db: Session, kb_id: uuid.UUID) -> KnowledgeBase:
+def _get_active_kb(db: Session, kb_id: int) -> KnowledgeBase:
     """获取未软删知识库；否则 404。"""
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None or kb.is_deleted:
@@ -73,7 +72,7 @@ def list_kbs(db: Session = Depends(get_db)) -> List[KnowledgeBaseOut]:
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
-def get_kb(kb_id: uuid.UUID, db: Session = Depends(get_db)) -> KnowledgeBaseOut:
+def get_kb(kb_id: int, db: Session = Depends(get_db)) -> KnowledgeBaseOut:
     """单个知识库详情（含文档计数）。"""
     kb = _get_active_kb(db, kb_id)
     cnt = (
@@ -90,7 +89,7 @@ def get_kb(kb_id: uuid.UUID, db: Session = Depends(get_db)) -> KnowledgeBaseOut:
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseOut)
 def update_kb(
-    kb_id: uuid.UUID,
+    kb_id: int,
     payload: KnowledgeBaseUpdate,
     db: Session = Depends(get_db),
 ) -> KnowledgeBaseOut:
@@ -119,7 +118,7 @@ def update_kb(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_kb(kb_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+def delete_kb(kb_id: int, db: Session = Depends(get_db)) -> Response:
     """软删除知识库并级联软删其下文档与 chunk（独立 session 内执行级联逻辑）。"""
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None or kb.is_deleted:

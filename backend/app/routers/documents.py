@@ -5,7 +5,6 @@
 支持按 ``knowledge_base_id`` 过滤。删除为软删除并标记关联 chunk。"""
 from __future__ import annotations
 
-import uuid
 from typing import List, Optional
 
 from fastapi import (
@@ -39,7 +38,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     background: BackgroundTasks,
-    knowledge_base_id: uuid.UUID = Form(...),
+    knowledge_base_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
@@ -77,7 +76,7 @@ async def upload_document(
 
 @router.get("", response_model=List[DocumentOut])
 def list_documents(
-    knowledge_base_id: Optional[uuid.UUID] = Query(default=None),
+    knowledge_base_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ) -> List[DocumentOut]:
     """文档列表；传 ``knowledge_base_id`` 时仅返回该库下未软删文档。"""
@@ -93,7 +92,7 @@ def list_documents(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_document(document_id: uuid.UUID) -> Response:
+def delete_document(document_id: int) -> Response:
     """软删除文档及其 chunk；204 无响应体（满足 FastAPI 对 204 的约束）。"""
     ok = soft_delete_document(document_id)
     if not ok:

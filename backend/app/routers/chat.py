@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Generator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -102,7 +101,7 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
 
     详见模块文档字符串中关于 DB Session 生命周期的说明。
     """
-    session_id: uuid.UUID
+    session_id: int
     is_first_message: bool
     with session_scope() as db:
         if payload.session_id is None:
@@ -124,7 +123,6 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
 
         db.add(Message(session_id=session_id, role="user", content=payload.message))
 
-    session_id_str = str(session_id)
     user_message_text = payload.message
 
     def event_generator() -> Generator[str, None, None]:
@@ -148,7 +146,7 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
                         yield _sse(
                             "meta",
                             {
-                                "session_id": session_id_str,
+                                "session_id": session_id,
                                 "used_rag": used_rag,
                                 "sources": sources_payload,
                                 "notice": notice,
@@ -179,7 +177,7 @@ def chat_stream(payload: ChatRequest) -> StreamingResponse:
 
                 final_title = session_obj.title
 
-            yield _sse("done", {"session_id": session_id_str, "title": final_title})
+            yield _sse("done", {"session_id": session_id, "title": final_title})
         except Exception as e:
             logger.exception("Stream chat failed")
             yield _sse("error", {"message": str(e) or "internal_error"})

@@ -15,7 +15,7 @@ import type {
 export default function HomePage() {
   // ---- Sessions ----
   const [sessions, setSessions] = useState<SessionItem[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -25,7 +25,7 @@ export default function HomePage() {
 
   // ---- Knowledge bases ----
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
-  const [selectedKbId, setSelectedKbId] = useState<string | null>(null);
+  const [selectedKbId, setSelectedKbId] = useState<number | null>(null);
 
   // ---- Documents (for selected KB) ----
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -62,7 +62,7 @@ export default function HomePage() {
   }, []);
 
   const refreshDocuments = useCallback(
-    async (kbId: string | null) => {
+    async (kbId: number | null) => {
       if (!kbId) {
         setDocuments([]);
         return;
@@ -80,7 +80,7 @@ export default function HomePage() {
     []
   );
 
-  const loadSession = useCallback(async (id: string) => {
+  const loadSession = useCallback(async (id: number) => {
     setLoadingMessages(true);
     setChatError(null);
     setChatNotice(null);
@@ -137,7 +137,7 @@ export default function HomePage() {
   const handleNewSession = async ({
     knowledgeBaseId,
   }: {
-    knowledgeBaseId: string | null;
+    knowledgeBaseId: number | null;
   }) => {
     try {
       const s = await api.createSession({
@@ -154,7 +154,7 @@ export default function HomePage() {
     }
   };
 
-  const handleDeleteSession = async (id: string) => {
+  const handleDeleteSession = async (id: number) => {
     try {
       await api.deleteSession(id);
       if (currentSessionId === id) {
@@ -190,7 +190,7 @@ export default function HomePage() {
     };
     setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
 
-    let receivedSessionId: string | null = currentSessionId;
+    let receivedSessionId: number | null = currentSessionId;
     let streamFailed = false;
 
     try {
@@ -247,7 +247,7 @@ export default function HomePage() {
     }
   };
 
-  const handleDeleteKb = async (id: string) => {
+  const handleDeleteKb = async (id: number) => {
     try {
       await api.deleteKnowledgeBase(id);
       if (selectedKbId === id) setSelectedKbId(null);
@@ -272,7 +272,7 @@ export default function HomePage() {
     }
   };
 
-  const handleDeleteDocument = async (id: string) => {
+  const handleDeleteDocument = async (id: number) => {
     try {
       await api.deleteDocument(id);
       await refreshDocuments(selectedKbId);

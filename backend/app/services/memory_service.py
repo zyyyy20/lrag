@@ -17,7 +17,6 @@ Token 计数默认使用 tiktoken ``cl100k_base``；对 Qwen 等模型为近似�
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -85,7 +84,7 @@ class MemoryMessage:
 
 def load_recent_messages(
     db: Session,
-    session_id: uuid.UUID,
+    session_id: int,
     max_messages: int,
     *,
     exclude_pending_user: bool = True,

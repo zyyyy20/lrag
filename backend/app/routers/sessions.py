@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,7 +19,7 @@ from ..schemas import MessageOut, SessionCreate, SessionDetail, SessionOut
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-def _kb_name(db: Session, kb_id: uuid.UUID | None) -> str | None:
+def _kb_name(db: Session, kb_id: int | None) -> str | None:
     """解析知识库显示名；若 KB 已删或不存在则返回 ``None``（前端可不展示）。"""
     if kb_id is None:
         return None
@@ -87,7 +86,7 @@ def list_sessions(db: Session = Depends(get_db)) -> List[SessionOut]:
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-def get_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> SessionDetail:
+def get_session(session_id: int, db: Session = Depends(get_db)) -> SessionDetail:
     """会话详情：含全部消息（前端用于刷新后恢复历史）。"""
     s = db.get(ChatSession, session_id)
     if s is None or s.is_deleted:
@@ -104,7 +103,7 @@ def get_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> Session
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_session(session_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+def delete_session(session_id: int, db: Session = Depends(get_db)) -> Response:
     """软删除会话（``is_deleted=True``）；消息随 ORM 级联删除。"""
     s = db.get(ChatSession, session_id)
     if s is None or s.is_deleted:

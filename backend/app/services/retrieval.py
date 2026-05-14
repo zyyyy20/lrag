@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import List
 
@@ -26,9 +25,9 @@ from .llm import get_embedder
 class RetrievedChunk:
     """单条检索命中的文本块及其元数据（供 prompt 与 sources 使用）。"""
 
-    chunk_id: str
-    document_id: str
-    knowledge_base_id: str
+    chunk_id: int
+    document_id: int
+    knowledge_base_id: int
     filename: str
     chunk_index: int
     content: str
@@ -38,7 +37,7 @@ class RetrievedChunk:
 def retrieve(
     db: Session,
     query: str,
-    knowledge_base_id: uuid.UUID,
+    knowledge_base_id: int,
     top_k: int | None = None,
 ) -> List[RetrievedChunk]:
     """在指定知识库内执行向量检索，返回 top_k 条候选 chunk。
@@ -94,9 +93,9 @@ def retrieve(
         score = max(0.0, 1.0 - dist)
         results.append(
             RetrievedChunk(
-                chunk_id=str(row.id),
-                document_id=str(row.document_id),
-                knowledge_base_id=str(row.knowledge_base_id),
+                chunk_id=int(row.id),
+                document_id=int(row.document_id),
+                knowledge_base_id=int(row.knowledge_base_id),
                 filename=row.filename,
                 chunk_index=int(row.chunk_index),
                 content=row.content,

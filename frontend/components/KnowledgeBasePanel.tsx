@@ -5,16 +5,16 @@ import type { DocumentItem, DocumentStatus, KnowledgeBase } from "@/lib/types";
 
 interface Props {
   knowledgeBases: KnowledgeBase[];
-  selectedKbId: string | null;
+  selectedKbId: number | null;
   documents: DocumentItem[];
   uploading: boolean;
   documentsLoading: boolean;
   error: string | null;
-  onSelectKb: (id: string | null) => void;
+  onSelectKb: (id: number | null) => void;
   onCreateKb: (name: string, description?: string) => Promise<void>;
-  onDeleteKb: (id: string) => void;
+  onDeleteKb: (id: number) => void;
   onUpload: (file: File) => void;
-  onDeleteDocument: (id: string) => void;
+  onDeleteDocument: (id: number) => void;
   onRefresh: () => void;
 }
 

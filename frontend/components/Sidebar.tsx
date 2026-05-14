@@ -5,12 +5,12 @@ import type { KnowledgeBase, SessionItem } from "@/lib/types";
 
 interface Props {
   sessions: SessionItem[];
-  currentId: string | null;
+  currentId: number | null;
   loading?: boolean;
   knowledgeBases: KnowledgeBase[];
-  onNew: (opts: { knowledgeBaseId: string | null }) => void;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onNew: (opts: { knowledgeBaseId: number | null }) => void;
+  onSelect: (id: number) => void;
+  onDelete: (id: number) => void;
 }
 
 export function Sidebar({
@@ -22,7 +22,7 @@ export function Sidebar({
   onSelect,
   onDelete,
 }: Props) {
-  const [hover, setHover] = useState<string | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (

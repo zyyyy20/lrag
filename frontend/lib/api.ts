@@ -47,14 +47,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, description }),
     }),
-  getKnowledgeBase: (id: string) =>
+  getKnowledgeBase: (id: number) =>
     request<KnowledgeBase>(`/api/knowledge-bases/${id}`),
-  updateKnowledgeBase: (id: string, payload: { name?: string; description?: string }) =>
+  updateKnowledgeBase: (id: number, payload: { name?: string; description?: string }) =>
     request<KnowledgeBase>(`/api/knowledge-bases/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
-  deleteKnowledgeBase: (id: string) =>
+  deleteKnowledgeBase: (id: number) =>
     request<void>(`/api/knowledge-bases/${id}`, { method: "DELETE" }),
 
   // ---- Sessions ----
@@ -62,18 +62,18 @@ export const api = {
   createSession: (payload: {
     title?: string;
     chat_mode?: ChatMode;
-    knowledge_base_id?: string | null;
+    knowledge_base_id?: number | null;
   }) =>
     request<SessionItem>("/api/sessions", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  getSession: (id: string) => request<SessionDetail>(`/api/sessions/${id}`),
-  deleteSession: (id: string) =>
+  getSession: (id: number) => request<SessionDetail>(`/api/sessions/${id}`),
+  deleteSession: (id: number) =>
     request<void>(`/api/sessions/${id}`, { method: "DELETE" }),
 
   // ---- Chat ----
-  chat: (message: string, sessionId?: string | null) =>
+  chat: (message: string, sessionId?: number | null) =>
     request<ChatResponse>("/api/chat", {
       method: "POST",
       body: JSON.stringify({ message, session_id: sessionId ?? null }),
@@ -81,26 +81,26 @@ export const api = {
 
   chatStream: (
     message: string,
-    sessionId: string | null,
+    sessionId: number | null,
     handlers: ChatStreamHandlers,
     signal?: AbortSignal
   ) => chatStream(message, sessionId, handlers, signal),
 
   // ---- Documents ----
-  listDocuments: (knowledgeBaseId?: string | null) => {
+  listDocuments: (knowledgeBaseId?: number | null) => {
     const qs = knowledgeBaseId ? `?knowledge_base_id=${knowledgeBaseId}` : "";
     return request<DocumentItem[]>(`/api/documents${qs}`);
   },
-  uploadDocument: (file: File, knowledgeBaseId: string) => {
+  uploadDocument: (file: File, knowledgeBaseId: number) => {
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("knowledge_base_id", knowledgeBaseId);
+    fd.append("knowledge_base_id", String(knowledgeBaseId));
     return request<DocumentItem>("/api/documents/upload", {
       method: "POST",
       body: fd,
     });
   },
-  deleteDocument: (id: string) =>
+  deleteDocument: (id: number) =>
     request<void>(`/api/documents/${id}`, { method: "DELETE" }),
 };
 
@@ -108,14 +108,14 @@ export const api = {
 // ===== SSE streaming chat =====
 
 export interface ChatStreamMeta {
-  session_id: string;
+  session_id: number;
   used_rag: boolean;
   sources: import("./types").Source[];
   notice?: string | null;
 }
 
 export interface ChatStreamDone {
-  session_id: string;
+  session_id: number;
   title: string;
 }
 
@@ -128,7 +128,7 @@ export interface ChatStreamHandlers {
 
 async function chatStream(
   message: string,
-  sessionId: string | null,
+  sessionId: number | null,
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {

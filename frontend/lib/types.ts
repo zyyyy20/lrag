@@ -8,7 +8,7 @@ export type DocumentStatus =
 export type ChatMode = "general" | "rag";
 
 export interface KnowledgeBase {
-  id: string;
+  id: number;
   name: string;
   description?: string | null;
   document_count: number;
@@ -17,8 +17,8 @@ export interface KnowledgeBase {
 }
 
 export interface Source {
-  knowledge_base_id?: string | null;
-  document_id?: string | null;
+  knowledge_base_id?: number | null;
+  document_id?: number | null;
   filename: string;
   chunk_index: number;
   score: number;
@@ -26,7 +26,7 @@ export interface Source {
 }
 
 export interface Message {
-  id: string;
+  id: number | string;
   role: "user" | "assistant" | "system";
   content: string;
   sources?: Source[] | null;
@@ -35,10 +35,10 @@ export interface Message {
 }
 
 export interface SessionItem {
-  id: string;
+  id: number;
   title: string;
   chat_mode: ChatMode;
-  knowledge_base_id?: string | null;
+  knowledge_base_id?: number | null;
   knowledge_base_name?: string | null;
   created_at: string;
   updated_at: string;
@@ -49,7 +49,7 @@ export interface SessionDetail extends SessionItem {
 }
 
 export interface ChatResponse {
-  session_id: string;
+  session_id: number;
   answer: string;
   used_rag: boolean;
   sources: Source[];
@@ -57,8 +57,8 @@ export interface ChatResponse {
 }
 
 export interface DocumentItem {
-  id: string;
-  knowledge_base_id: string;
+  id: number;
+  knowledge_base_id: number;
   filename: string;
   content_type: string;
   file_size: number;

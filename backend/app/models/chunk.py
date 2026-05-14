@@ -1,12 +1,10 @@
 """文档分块表：每块文本 + pgvector 向量；支持软删除不参与检索。"""
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, Identity, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..config import get_settings
@@ -20,11 +18,11 @@ class DocumentChunk(Base):
 
     __tablename__ = "document_chunks"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(always=False), primary_key=True
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    document_id: Mapped[int] = mapped_column(
+        Integer,
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

@@ -21,7 +21,6 @@ messages」完全一致，避免流式与非流式行为分叉。
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import Generator, List, Tuple
 
@@ -58,8 +57,8 @@ def _to_sources(chunks: List[RetrievedChunk]) -> List[Source]:
             preview = preview[:PREVIEW_LEN] + "…"
         out.append(
             Source(
-                knowledge_base_id=uuid.UUID(c.knowledge_base_id),
-                document_id=uuid.UUID(c.document_id),
+                knowledge_base_id=c.knowledge_base_id,
+                document_id=c.document_id,
                 filename=c.filename,
                 chunk_index=c.chunk_index,
                 score=round(c.score, 4),

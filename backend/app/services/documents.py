@@ -101,7 +101,7 @@ def _embed_in_batches(texts: list[str], batch: int = _EMBED_BATCH) -> Iterable[l
             yield vec
 
 
-def process_document(document_id: uuid.UUID) -> None:
+def process_document(document_id: int) -> None:
     """异步文档索引主流程：解析 → 分块 → 嵌入 → 写入数据库。
 
     设计为 FastAPI ``BackgroundTasks`` 调用；内部使用独立 ``session_scope``，
@@ -171,7 +171,7 @@ def process_document(document_id: uuid.UUID) -> None:
                 doc.error = str(e)[:1000]
 
 
-def soft_delete_document(document_id: uuid.UUID) -> bool:
+def soft_delete_document(document_id: int) -> bool:
     """软删除单个文档及其所有 chunk，并尝试删除磁盘文件。
 
     Args:
@@ -202,7 +202,7 @@ def soft_delete_document(document_id: uuid.UUID) -> bool:
         return True
 
 
-def soft_delete_documents_under_kb(knowledge_base_id: uuid.UUID) -> int:
+def soft_delete_documents_under_kb(knowledge_base_id: int) -> int:
     """软删除某知识库下所有未删文档及其 chunk（删除知识库时级联调用）。
 
     Args:

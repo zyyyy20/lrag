@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import enum
-import uuid
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Identity, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -28,11 +26,11 @@ class Document(Base):
 
     __tablename__ = "documents"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(always=False), primary_key=True
     )
-    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    knowledge_base_id: Mapped[int] = mapped_column(
+        Integer,
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

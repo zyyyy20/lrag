@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import enum
-import uuid
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Identity, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -25,8 +23,8 @@ class Session(Base):
 
     __tablename__ = "sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[int] = mapped_column(
+        Integer, Identity(always=False), primary_key=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="新会话")
     chat_mode: Mapped[ChatMode] = mapped_column(
@@ -34,8 +32,8 @@ class Session(Base):
         nullable=False,
         default=ChatMode.general,
     )
-    knowledge_base_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+    knowledge_base_id: Mapped[int | None] = mapped_column(
+        Integer,
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
         nullable=True,
         index=True,

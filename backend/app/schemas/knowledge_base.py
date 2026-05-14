@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -20,7 +19,7 @@ class KnowledgeBaseUpdate(BaseModel):
 class KnowledgeBaseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
+    id: int
     name: str
     description: Optional[str] = None
     document_count: int = 0
