@@ -124,70 +124,113 @@ def _paper_html(
     title = html.escape(session.title or "Conversation")
     summary_html = html.escape(summary).replace("\n", "<br>")
     generated = html.escape(generated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+    issue_date = html.escape(generated_at.strftime("%Y-%m-%d"))
+    check_code = html.escape(invoice_no[-12:].upper())
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LRAG 对话用量发票 {html.escape(invoice_no)}</title>
+  <title>LRAG 对话用量电子票据 {html.escape(invoice_no)}</title>
   <style>
     :root {{
       color-scheme: light;
-      --ink: #1f2933;
-      --muted: #65758b;
-      --paper: #f7f2e8;
-      --line: #d8cbb8;
-      --accent: #b91c1c;
+      --ink: #20242b;
+      --muted: #667085;
+      --paper: #f8f3e7;
+      --paper-deep: #ede0c8;
+      --line: #b9aa92;
+      --line-soft: #d8cbb7;
+      --red: #b42318;
+      --blue: #245b8f;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
-      padding: 36px 18px;
-      background: #d7dde4;
-      color: var(--ink);
-      font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-    }}
-    .paper {{
-      position: relative;
-      max-width: 860px;
-      margin: 0 auto;
-      padding: 44px 52px 50px;
+      padding: 38px 18px;
       background:
-        radial-gradient(circle at 18% 22%, rgba(255,255,255,.42) 0 1px, transparent 1.5px),
-        radial-gradient(circle at 72% 64%, rgba(54,44,30,.10) 0 1px, transparent 1.4px),
-        linear-gradient(90deg, rgba(255,255,255,.34), transparent 18%, rgba(93,71,48,.08) 50%, transparent 78%),
-        var(--paper);
-      background-size: 9px 9px, 11px 11px, 100% 100%, auto;
-      border: 1px solid rgba(111, 85, 55, .25);
-      box-shadow: 0 24px 60px rgba(35, 45, 64, .22), inset 0 0 42px rgba(111, 85, 55, .08);
+        radial-gradient(circle at top left, rgba(255,255,255,.55), transparent 28rem),
+        linear-gradient(135deg, #c9d0d8, #eef1f4 48%, #c7cdd5);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Inter", "Segoe UI", system-ui, sans-serif;
     }}
-    .paper::before {{
+    .sheet {{
+      position: relative;
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 22px;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(255,255,255,.55) 0 1px, transparent 1.6px),
+        radial-gradient(circle at 72% 68%, rgba(68,52,34,.10) 0 1px, transparent 1.5px),
+        repeating-linear-gradient(8deg, rgba(107,85,53,.045) 0 1px, transparent 1px 7px),
+        linear-gradient(92deg, rgba(255,255,255,.45), transparent 20%, rgba(94,72,45,.10) 54%, transparent 82%),
+        var(--paper);
+      background-size: 10px 10px, 13px 13px, auto, 100% 100%, auto;
+      border: 1px solid rgba(98,74,45,.34);
+      box-shadow:
+        0 28px 70px rgba(34, 44, 58, .28),
+        inset 0 0 52px rgba(87, 63, 35, .12);
+    }}
+    .sheet::before,
+    .sheet::after {{
       content: "";
       position: absolute;
-      inset: 18px;
-      border: 1px dashed rgba(121, 92, 54, .34);
+      top: 0;
+      bottom: 0;
+      width: 16px;
+      background:
+        radial-gradient(circle, #cfd6dd 0 4px, transparent 4.5px) 50% 10px / 16px 22px repeat-y;
+      pointer-events: none;
+    }}
+    .sheet::before {{ left: -8px; }}
+    .sheet::after {{ right: -8px; }}
+    .inner {{
+      position: relative;
+      padding: 34px 42px 38px;
+      border: 1px solid rgba(123, 94, 58, .42);
+      background: rgba(255, 252, 245, .18);
+    }}
+    .inner::before {{
+      content: "";
+      position: absolute;
+      inset: 10px;
+      border: 1px dashed rgba(129, 98, 59, .36);
       pointer-events: none;
     }}
     .fold {{
       position: absolute;
       left: 0;
       right: 0;
-      top: 132px;
+      top: 148px;
       height: 1px;
       background: linear-gradient(90deg, transparent, rgba(83, 72, 56, .22), transparent);
     }}
+    .serial {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      color: var(--blue);
+      font-size: 12px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      letter-spacing: 0;
+    }}
     header {{
+      position: relative;
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 24px;
-      border-bottom: 2px solid var(--line);
-      padding-bottom: 22px;
+      border-top: 3px double var(--red);
+      border-bottom: 3px double var(--red);
+      padding: 18px 0 16px;
     }}
     h1 {{
       margin: 0;
-      font-size: 30px;
+      color: var(--red);
+      font-size: 31px;
+      font-weight: 800;
       letter-spacing: 0;
     }}
     .sub {{
@@ -198,61 +241,122 @@ def _paper_html(
     }}
     .stamp {{
       transform: rotate(-8deg);
-      border: 3px double var(--accent);
-      color: var(--accent);
-      padding: 10px 14px;
+      border: 3px double var(--red);
+      border-radius: 999px;
+      color: var(--red);
+      padding: 16px 13px;
+      min-width: 92px;
+      min-height: 92px;
       font-weight: 800;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       text-align: center;
-      opacity: .82;
+      opacity: .78;
+      display: grid;
+      place-items: center;
+      line-height: 1.25;
     }}
-    .meta {{
+    .info-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px 24px;
-      margin: 26px 0;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      margin: 22px 0 0;
       font-size: 14px;
     }}
-    .label {{ color: var(--muted); }}
+    .info-cell {{
+      min-height: 54px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .info-cell:nth-child(odd) {{ border-right: 1px solid var(--line); }}
+    .label {{
+      display: inline-block;
+      min-width: 76px;
+      color: var(--muted);
+    }}
     table {{
       width: 100%;
       border-collapse: collapse;
-      margin: 22px 0 28px;
+      margin: 20px 0 0;
       font-size: 14px;
-      background: rgba(255,255,255,.2);
+      background: rgba(255,255,255,.14);
     }}
     th, td {{
       border: 1px solid var(--line);
-      padding: 12px 14px;
+      padding: 11px 12px;
       text-align: left;
     }}
     th {{
-      color: var(--muted);
+      color: #574832;
       font-weight: 650;
-      background: rgba(255,255,255,.26);
+      background: rgba(237, 224, 200, .44);
     }}
     td.num {{
       font-family: "SFMono-Regular", Consolas, monospace;
       text-align: right;
     }}
+    .total-row td {{
+      font-weight: 800;
+      background: rgba(255, 255, 255, .30);
+    }}
+    .amount {{
+      display: grid;
+      grid-template-columns: 1fr 220px;
+      border: 1px solid var(--line);
+      border-top: 0;
+      font-size: 14px;
+    }}
+    .amount div {{
+      padding: 12px;
+    }}
+    .amount div:first-child {{
+      border-right: 1px solid var(--line);
+    }}
     .summary {{
       position: relative;
       margin-top: 24px;
-      padding: 18px 18px 20px;
-      border-left: 4px solid rgba(185, 28, 28, .58);
-      background: rgba(255,255,255,.28);
+      padding: 18px 18px 20px 20px;
+      border: 1px solid var(--line);
+      border-left: 5px solid rgba(180, 35, 24, .70);
+      background: rgba(255,255,255,.24);
       line-height: 1.75;
       font-size: 14px;
     }}
+    .signatures {{
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-top: 26px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .signature {{
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }}
+    .qr {{
+      width: 78px;
+      height: 78px;
+      margin-left: auto;
+      border: 1px solid #7b7f85;
+      background:
+        linear-gradient(90deg, #222 10px, transparent 10px 14px, #222 14px 22px, transparent 22px),
+        linear-gradient(#222 9px, transparent 9px 15px, #222 15px 24px, transparent 24px),
+        repeating-linear-gradient(45deg, #222 0 3px, #fff 3px 7px);
+      background-size: 26px 26px, 28px 28px, 12px 12px;
+      opacity: .76;
+    }}
     .watermark {{
       position: absolute;
-      right: 34px;
-      bottom: 24px;
-      color: rgba(60, 47, 34, .08);
-      font-size: 42px;
+      left: 50%;
+      top: 49%;
+      transform: translate(-50%, -50%) rotate(-18deg);
+      color: rgba(180, 35, 24, .055);
+      font-size: 66px;
       font-weight: 900;
       letter-spacing: 1px;
       pointer-events: none;
+      white-space: nowrap;
     }}
     footer {{
       margin-top: 30px;
@@ -264,53 +368,75 @@ def _paper_html(
     }}
     @media (max-width: 700px) {{
       body {{ padding: 0; background: var(--paper); }}
-      .paper {{ padding: 28px 22px 34px; box-shadow: none; border: 0; }}
+      .sheet {{ padding: 0; box-shadow: none; border: 0; }}
+      .sheet::before, .sheet::after {{ display: none; }}
+      .inner {{ padding: 24px 18px 30px; border: 0; }}
       header {{ flex-direction: column; }}
-      .meta {{ grid-template-columns: 1fr; }}
+      .info-grid, .amount, .signatures {{ grid-template-columns: 1fr; }}
+      .info-cell:nth-child(odd), .amount div:first-child {{ border-right: 0; }}
       .watermark {{ display: none; }}
     }}
   </style>
 </head>
 <body>
-  <main class="paper">
-    <div class="fold"></div>
-    <header>
-      <div>
-        <h1>LRAG 对话用量发票</h1>
-        <div class="sub">Invoice No. {html.escape(invoice_no)}<br>Generated at {generated}</div>
+  <main class="sheet">
+    <section class="inner">
+      <div class="fold"></div>
+      <div class="serial">
+        <span>电子票据代码 3100-DEBUG-LRAG</span>
+        <span>校验码 {check_code}</span>
       </div>
-      <div class="stamp">DEBUG<br>INVOICE</div>
-    </header>
+      <header>
+        <div>
+          <h1>LRAG 对话用量电子发票</h1>
+          <div class="sub">发票号码：{html.escape(invoice_no)}<br>开票日期：{issue_date}　生成时间：{generated}</div>
+        </div>
+        <div class="qr" aria-label="invoice verification mark"></div>
+        <div class="stamp">LRAG<br>已开具</div>
+      </header>
 
-    <section class="meta">
-      <div><span class="label">会话标题：</span>{title}</div>
-      <div><span class="label">会话编号：</span>{session.id}</div>
-      <div><span class="label">用户消息：</span>{user_count}</div>
-      <div><span class="label">助手消息：</span>{assistant_count}</div>
+      <section class="info-grid">
+        <div class="info-cell"><span class="label">购买方：</span>Debug Guest User #{session.user_id}</div>
+        <div class="info-cell"><span class="label">销售方：</span>LRAG Conversation Service</div>
+        <div class="info-cell"><span class="label">会话标题：</span>{title}</div>
+        <div class="info-cell"><span class="label">会话编号：</span>{session.id}</div>
+        <div class="info-cell"><span class="label">用户消息：</span>{user_count} 条</div>
+        <div class="info-cell"><span class="label">助手消息：</span>{assistant_count} 条</div>
+      </section>
+
+      <table>
+        <thead>
+          <tr><th>货物或应税劳务、服务名称</th><th>规格型号</th><th>单位</th><th>数量</th><th>Token</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>*信息技术服务*用户输入与上下文</td><td>Prompt</td><td>token</td><td class="num">1</td><td class="num">{prompt_tokens}</td></tr>
+          <tr><td>*信息技术服务*模型回复内容</td><td>Completion</td><td>token</td><td class="num">1</td><td class="num">{completion_tokens}</td></tr>
+          <tr><td>*信息技术服务*票据摘要生成</td><td>Summary</td><td>token</td><td class="num">1</td><td class="num">{summary_tokens}</td></tr>
+          <tr class="total-row"><td colspan="4">合计</td><td class="num">{total_tokens}</td></tr>
+        </tbody>
+      </table>
+      <section class="amount">
+        <div><span class="label">价税合计：</span>零元整（Debug 估算票据，不作为真实结算凭证）</div>
+        <div><span class="label">Token 合计：</span><strong>{total_tokens}</strong></div>
+      </section>
+
+      <section class="summary">
+        <strong>对话内容摘要</strong><br>
+        {summary_html}
+      </section>
+
+      <section class="signatures">
+        <div class="signature">收款人：System</div>
+        <div class="signature">复核：ReAct Agent</div>
+        <div class="signature">开票人：LRAG Tool</div>
+      </section>
+
+      <footer>
+        <span>本票据为系统调试用途，Token 为服务端估算值；后续可接入模型 usage 精确计量。</span>
+        <span>LRAG / Debug Guest</span>
+      </footer>
+      <div class="watermark">LRAG DEBUG INVOICE</div>
     </section>
-
-    <table>
-      <thead>
-        <tr><th>项目</th><th>说明</th><th>Token</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Prompt</td><td>用户输入与上下文估算</td><td class="num">{prompt_tokens}</td></tr>
-        <tr><td>Completion</td><td>助手回答估算</td><td class="num">{completion_tokens}</td></tr>
-        <tr><td>Summary</td><td>本发票摘要估算</td><td class="num">{summary_tokens}</td></tr>
-        <tr><td><strong>Total</strong></td><td>当前会话累计估算</td><td class="num"><strong>{total_tokens}</strong></td></tr>
-      </tbody>
-    </table>
-
-    <section class="summary">
-      <strong>对话内容摘要</strong><br>
-      {summary_html}
-    </section>
-
-    <footer>
-      <span>Token 为服务端估算值，后续可接入模型 usage 精确计量。</span>
-      <span>LRAG / Debug Guest</span>
-    </footer>
-    <div class="watermark">LRAG DEBUG INVOICE</div>
   </main>
 </body>
 </html>
