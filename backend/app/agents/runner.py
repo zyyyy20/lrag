@@ -7,6 +7,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..schemas.chat import Source
 from ..services.llm import get_llm
 from ..tools import ensure_tools_registered, tool_registry
 from ..tools.base import ToolContext, ToolResult
@@ -15,6 +16,31 @@ from .prompts import build_react_system_prompt
 from .types import AgentRunResult
 
 logger = logging.getLogger(__name__)
+
+
+def _observation_payload(result: ToolResult) -> dict:
+    payload = result.model_dump()
+    if result.tool == "retrieve_knowledge_base":
+        max_chars = get_settings().agent_rag_observation_max_chars
+        data = dict(payload.get("data") or {})
+        context = str(data.get("context") or "")
+        if len(context) > max_chars:
+            data["context"] = context[:max_chars] + "\n...[truncated]"
+        payload["data"] = data
+    return payload
+
+
+def _extract_rag_sources(result: ToolResult) -> list[Source]:
+    if result.tool != "retrieve_knowledge_base":
+        return []
+    raw_sources = result.data.get("sources") or []
+    sources: list[Source] = []
+    for item in raw_sources:
+        try:
+            sources.append(Source.model_validate(item))
+        except Exception:
+            logger.warning("Invalid RAG source payload: %s", item)
+    return sources
 
 
 class AgentRunner:
@@ -36,7 +62,9 @@ class AgentRunner:
         if not get_settings().enable_react_agent:
             return None
 
-        tools = tool_registry.list()
+        tool_results: list[ToolResult] = []
+        ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
+        tools = tool_registry.list_available(ctx)
         if not tools:
             return None
 
@@ -51,8 +79,9 @@ class AgentRunner:
                 ),
             },
         ]
-        tool_results: list[ToolResult] = []
-        ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
+        used_rag = False
+        rag_sources: list[Source] = []
+        notice: str | None = None
 
         for _ in range(max(1, self.max_steps)):
             raw = get_llm().chat(messages, temperature=0.0, max_tokens=500)
@@ -65,10 +94,16 @@ class AgentRunner:
                     return AgentRunResult(
                         final_answer=tool_results[-1].message,
                         tool_results=tool_results,
+                        used_rag=used_rag,
+                        sources=rag_sources,
+                        notice=notice,
                     )
                 return AgentRunResult(
                     final_answer=decision.final_answer.strip(),
                     tool_results=tool_results,
+                    used_rag=used_rag,
+                    sources=rag_sources,
+                    notice=notice,
                 )
 
             if not decision.tool_name:
@@ -90,12 +125,17 @@ class AgentRunner:
                     message=str(exc) or "工具执行失败。",
                 )
             tool_results.append(result)
+            if result.tool == "retrieve_knowledge_base":
+                used_rag = bool(result.data.get("used_rag"))
+                rag_sources = _extract_rag_sources(result)
+                if not used_rag:
+                    notice = result.message
             messages.append({"role": "assistant", "content": raw})
             messages.append(
                 {
                     "role": "user",
                     "content": "Observation: "
-                    + json.dumps(result.model_dump(), ensure_ascii=False)
+                    + json.dumps(_observation_payload(result), ensure_ascii=False)
                     + "\nReturn the Final Answer now.",
                 }
             )
@@ -104,5 +144,8 @@ class AgentRunner:
             return AgentRunResult(
                 final_answer=tool_results[-1].message,
                 tool_results=tool_results,
+                used_rag=used_rag,
+                sources=rag_sources,
+                notice=notice,
             )
         return None

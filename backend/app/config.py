@@ -103,6 +103,8 @@ class Settings(BaseSettings):
 
     enable_react_agent: bool = True
     react_agent_max_steps: int = 3
+    enable_agent_rag: bool = True
+    agent_rag_observation_max_chars: int = 6000
     static_dir: str = "/app/static"
 
     @computed_field  # type: ignore[misc]

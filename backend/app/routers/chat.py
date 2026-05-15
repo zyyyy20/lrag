@@ -77,9 +77,9 @@ def chat(
     )
     if agent_result is not None and agent_result.used_tool:
         answer = agent_result.final_answer
-        used_rag = False
-        sources = []
-        notice = None
+        used_rag = agent_result.used_rag
+        sources = agent_result.sources
+        notice = agent_result.notice
         tool_results = [item.model_dump() for item in agent_result.tool_results]
     else:
         answer, used_rag, sources, notice = answer_question(db, session, payload.message)
@@ -196,14 +196,19 @@ def chat_stream(
                         item.model_dump() for item in agent_result.tool_results
                     ]
                     full_text = agent_result.final_answer.strip()
+                    used_rag = agent_result.used_rag
+                    sources_payload = [
+                        source.model_dump(mode="json") for source in agent_result.sources
+                    ]
+                    notice = agent_result.notice
                     db.add(
                         Message(
                             user_id=user_id,
                             session_id=session_id,
                             role="assistant",
                             content=full_text,
-                            used_rag=False,
-                            sources=None,
+                            used_rag=used_rag,
+                            sources=sources_payload or None,
                             tool_results=tool_results_payload,
                         )
                     )
@@ -219,9 +224,9 @@ def chat_stream(
                         "meta",
                         {
                             "session_id": session_id,
-                            "used_rag": False,
-                            "sources": [],
-                            "notice": None,
+                            "used_rag": used_rag,
+                            "sources": sources_payload,
+                            "notice": notice,
                         },
                     )
                     yield _sse("delta", {"content": full_text})

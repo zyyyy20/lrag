@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .base import ToolSpec
+from .base import ToolContext, ToolSpec
 
 
 class ToolRegistry:
@@ -22,6 +22,13 @@ class ToolRegistry:
 
     def list(self) -> list[ToolSpec]:
         return list(self._tools.values())
+
+    def list_available(self, ctx: ToolContext) -> list[ToolSpec]:
+        available: list[ToolSpec] = []
+        for tool in self._tools.values():
+            if tool.is_available is None or tool.is_available(ctx):
+                available.append(tool)
+        return available
 
     def names(self) -> set[str]:
         return set(self._tools)

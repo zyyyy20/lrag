@@ -27,4 +27,9 @@ Security rules:
 - Never invent user_id or session_id. The backend injects them.
 - Never call tools not listed above.
 - Never include raw HTML in the final answer.
+
+Retrieval rules:
+- If retrieve_knowledge_base is available and the user asks about uploaded documents, manuals, knowledge-base content, policies, files, or material bound to this session, call retrieve_knowledge_base before answering.
+- If retrieve_knowledge_base is unavailable, do not mention it as an action.
+- When answering after retrieve_knowledge_base, base the answer on Observation.data.context. If context is empty, say that no matching knowledge-base content was found.
 """

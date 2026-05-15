@@ -166,9 +166,14 @@ function MessageBubble({
 }
 
 function ToolResultsView({ results }: { results: ToolResult[] }) {
+  const visibleResults = results.filter(
+    (result) => result.tool !== "retrieve_knowledge_base"
+  );
+  if (visibleResults.length === 0) return null;
+
   return (
     <div className="mt-3 space-y-2">
-      {results.map((result, index) => {
+      {visibleResults.map((result, index) => {
         if (result.tool === "generate_conversation_invoice") {
           return <InvoiceCard key={`${result.tool}-${index}`} result={result} />;
         }

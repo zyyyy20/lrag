@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -41,12 +41,18 @@ class ToolHandler(Protocol):
         ...
 
 
+class ToolAvailability(Protocol):
+    def __call__(self, ctx: ToolContext) -> bool:
+        ...
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str
     parameters: dict[str, Any]
     handler: ToolHandler
+    is_available: ToolAvailability | None = None
 
     def prompt_description(self) -> str:
         return (
