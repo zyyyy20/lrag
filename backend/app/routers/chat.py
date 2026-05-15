@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..agents.runner import AgentRunner
 from ..database import get_db, session_scope
 from ..dependencies.auth import get_current_user
 from ..models import ChatMode, Message, User
@@ -68,7 +69,21 @@ def chat(
     )
     db.flush()
 
-    answer, used_rag, sources, notice = answer_question(db, session, payload.message)
+    agent_result = AgentRunner().try_run_tool(
+        db=db,
+        user_id=user_id,
+        session_id=session.id,
+        user_message=payload.message,
+    )
+    if agent_result is not None and agent_result.used_tool:
+        answer = agent_result.final_answer
+        used_rag = False
+        sources = []
+        notice = None
+        tool_results = [item.model_dump() for item in agent_result.tool_results]
+    else:
+        answer, used_rag, sources, notice = answer_question(db, session, payload.message)
+        tool_results = []
 
     db.add(
         Message(
@@ -78,6 +93,7 @@ def chat(
             content=answer,
             used_rag=used_rag,
             sources=[s.model_dump(mode="json") for s in sources] if sources else None,
+            tool_results=tool_results or None,
         )
     )
 
@@ -92,6 +108,7 @@ def chat(
         used_rag=used_rag,
         sources=sources,
         notice=notice,
+        tool_results=tool_results,
     )
 
 
@@ -166,6 +183,51 @@ def chat_stream(
                 )
                 if session_obj is None or session_obj.is_deleted:
                     yield _sse("error", {"message": "Session not found"})
+                    return
+
+                agent_result = AgentRunner().try_run_tool(
+                    db=db,
+                    user_id=user_id,
+                    session_id=session_id,
+                    user_message=user_message_text,
+                )
+                if agent_result is not None and agent_result.used_tool:
+                    tool_results_payload = [
+                        item.model_dump() for item in agent_result.tool_results
+                    ]
+                    full_text = agent_result.final_answer.strip()
+                    db.add(
+                        Message(
+                            user_id=user_id,
+                            session_id=session_id,
+                            role="assistant",
+                            content=full_text,
+                            used_rag=False,
+                            sources=None,
+                            tool_results=tool_results_payload,
+                        )
+                    )
+
+                    if is_first_message:
+                        try:
+                            session_obj.title = generate_title(user_message_text)
+                        except Exception:
+                            logger.warning("Title generation failed", exc_info=True)
+
+                    final_title = session_obj.title
+                    yield _sse(
+                        "meta",
+                        {
+                            "session_id": session_id,
+                            "used_rag": False,
+                            "sources": [],
+                            "notice": None,
+                        },
+                    )
+                    yield _sse("delta", {"content": full_text})
+                    for item in tool_results_payload:
+                        yield _sse("tool_result", item)
+                    yield _sse("done", {"session_id": session_id, "title": final_title})
                     return
 
                 for kind, data in answer_question_stream(db, session_obj, user_message_text):

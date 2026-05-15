@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Message, SessionItem, Source } from "@/lib/types";
+import { apiUrl } from "@/lib/api";
+import type { Message, SessionItem, Source, ToolResult } from "@/lib/types";
 
 interface Props {
   messages: Message[];
@@ -156,8 +157,85 @@ function MessageBubble({
         {!isUser && message.used_rag && message.sources && message.sources.length > 0 && (
           <SourcesView sources={message.sources} />
         )}
+        {!isUser && message.tool_results && message.tool_results.length > 0 && (
+          <ToolResultsView results={message.tool_results} />
+        )}
       </div>
     </li>
+  );
+}
+
+function ToolResultsView({ results }: { results: ToolResult[] }) {
+  return (
+    <div className="mt-3 space-y-2">
+      {results.map((result, index) => {
+        if (result.tool === "generate_conversation_invoice") {
+          return <InvoiceCard key={`${result.tool}-${index}`} result={result} />;
+        }
+        return (
+          <div
+            key={`${result.tool}-${index}`}
+            className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700"
+          >
+            <div className="font-medium text-slate-800">{result.tool}</div>
+            <div className="mt-1">{result.message}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InvoiceCard({ result }: { result: ToolResult }) {
+  const htmlUrl =
+    typeof result.data.html_url === "string" ? apiUrl(result.data.html_url) : null;
+  const tokenTotal =
+    typeof result.data.token_total === "number" ? result.data.token_total : null;
+  const invoiceNo =
+    typeof result.data.invoice_no === "string" ? result.data.invoice_no : null;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-amber-950">
+            {result.data.title || "对话用量发票"}
+          </div>
+          {invoiceNo && (
+            <div className="mt-1 font-mono text-[11px] text-amber-700">
+              {invoiceNo}
+            </div>
+          )}
+        </div>
+        {htmlUrl && (
+          <a
+            href={htmlUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+          >
+            打开
+          </a>
+        )}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded border border-amber-200 bg-white/70 px-2 py-1.5">
+          <div className="text-[11px] text-amber-700">Total tokens</div>
+          <div className="font-mono text-sm font-semibold">
+            {tokenTotal ?? "-"}
+          </div>
+        </div>
+        <div className="rounded border border-amber-200 bg-white/70 px-2 py-1.5">
+          <div className="text-[11px] text-amber-700">Messages</div>
+          <div className="font-mono text-sm font-semibold">
+            {typeof result.data.message_count === "number"
+              ? result.data.message_count
+              : "-"}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 text-[12px] text-amber-800">{result.message}</div>
+    </div>
   );
 }
 

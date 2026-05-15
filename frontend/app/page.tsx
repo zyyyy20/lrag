@@ -215,6 +215,15 @@ export default function HomePage() {
             )
           );
         },
+        onToolResult: (result) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, tool_results: [...(m.tool_results ?? []), result] }
+                : m
+            )
+          );
+        },
         onDone: () => {
           if (!currentSessionId && receivedSessionId) {
             setCurrentSessionId(receivedSessionId);

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     sources: Optional[List[Source]] = None
+    tool_results: Optional[List[dict[str, Any]]] = None
     used_rag: Optional[bool] = None
     created_at: datetime
 

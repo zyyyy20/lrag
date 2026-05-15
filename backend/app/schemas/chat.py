@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,3 +25,4 @@ class ChatResponse(BaseModel):
     used_rag: bool
     sources: List[Source] = []
     notice: Optional[str] = None
+    tool_results: List[dict[str, Any]] = []

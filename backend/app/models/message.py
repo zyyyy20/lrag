@@ -33,6 +33,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant | system
     content: Mapped[str] = mapped_column(Text, nullable=False)
     sources: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tool_results: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     used_rag: Mapped[bool | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

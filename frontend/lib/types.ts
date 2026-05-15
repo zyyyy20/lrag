@@ -25,11 +25,30 @@ export interface Source {
   content_preview: string;
 }
 
+export interface ToolResult {
+  type: "tool_result";
+  tool: string;
+  ok: boolean;
+  message: string;
+  data: {
+    title?: string;
+    html_url?: string;
+    invoice_no?: string;
+    token_total?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    summary_tokens?: number;
+    message_count?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface Message {
   id: number | string;
   role: "user" | "assistant" | "system";
   content: string;
   sources?: Source[] | null;
+  tool_results?: ToolResult[] | null;
   used_rag?: boolean | null;
   created_at: string;
 }
@@ -54,6 +73,7 @@ export interface ChatResponse {
   used_rag: boolean;
   sources: Source[];
   notice?: string | null;
+  tool_results?: ToolResult[];
 }
 
 export interface DocumentItem {

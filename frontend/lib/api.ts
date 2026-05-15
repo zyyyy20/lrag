@@ -12,6 +12,11 @@ const API_BASE =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE) ||
   "http://localhost:8000";
 
+export function apiUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  return `${API_BASE}${pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const guestHeaders = await getDebugGuestHeaders();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -125,6 +130,7 @@ export interface ChatStreamDone {
 export interface ChatStreamHandlers {
   onMeta?: (meta: ChatStreamMeta) => void;
   onDelta?: (delta: string) => void;
+  onToolResult?: (result: import("./types").ToolResult) => void;
   onDone?: (done: ChatStreamDone) => void;
   onError?: (message: string) => void;
 }
@@ -188,6 +194,8 @@ async function chatStream(
       }
     } else if (eventName === "done") {
       handlers.onDone?.(data as ChatStreamDone);
+    } else if (eventName === "tool_result") {
+      handlers.onToolResult?.(data as import("./types").ToolResult);
     } else if (eventName === "error") {
       const msg = (data as { message?: string }).message ?? "stream error";
       handlers.onError?.(msg);

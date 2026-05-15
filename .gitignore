@@ -14,10 +14,13 @@ node_modules/
 .next/
 out/
 npm-debug.log*
+*.tsbuildinfo
 
 # uploads
 backend/uploads/
 uploads/
+backend/static/
+static/
 
 # os
 .DS_Store

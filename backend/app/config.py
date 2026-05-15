@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     upload_dir: str = "/app/uploads"
     max_upload_mb: int = 20
 
+    enable_react_agent: bool = True
+    react_agent_max_steps: int = 3
+    static_dir: str = "/app/static"
+
     @computed_field  # type: ignore[misc]
     @property
     def cors_origins(self) -> List[str]:
