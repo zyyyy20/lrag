@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/api";
-import type { Message, SessionItem, Source, ToolResult } from "@/lib/types";
+import type {
+  AgentTraceEvent,
+  Message,
+  SessionItem,
+  Source,
+  ToolResult,
+} from "@/lib/types";
 
 interface Props {
   messages: Message[];
@@ -157,37 +163,121 @@ function MessageBubble({
         {!isUser && message.used_rag && message.sources && message.sources.length > 0 && (
           <SourcesView sources={message.sources} />
         )}
-        {!isUser && message.tool_results && message.tool_results.length > 0 && (
-          <ToolResultsView results={message.tool_results} />
+        {!isUser && (
+          <AgentTraceView
+            trace={message.agent_trace}
+            toolResults={message.tool_results}
+          />
         )}
       </div>
     </li>
   );
 }
 
-function ToolResultsView({ results }: { results: ToolResult[] }) {
-  const visibleResults = results.filter(
-    (result) => result.tool !== "retrieve_knowledge_base"
-  );
-  if (visibleResults.length === 0) return null;
+function traceFromToolResult(result: ToolResult, index: number): AgentTraceEvent {
+  const rawSources = result.data?.sources;
+  const sources = Array.isArray(rawSources) ? (rawSources as Source[]) : [];
+  const title =
+    result.tool === "retrieve_knowledge_base"
+      ? "查询知识库"
+      : result.tool === "generate_conversation_invoice"
+        ? "生成对话发票"
+        : result.tool;
+  const summary =
+    result.tool === "retrieve_knowledge_base" && sources.length > 0
+      ? `检索完成，命中 ${sources.length} 条相关内容`
+      : result.tool === "generate_conversation_invoice" && result.ok
+        ? "HTML 对话发票已生成"
+        : result.message;
+
+  return {
+    id: `saved-${result.tool}-${index}`,
+    type: "tool_result",
+    title,
+    status: result.ok ? "success" : "error",
+    tool: result.tool,
+    summary,
+    sources,
+  };
+}
+
+function AgentTraceView({
+  trace,
+  toolResults,
+}: {
+  trace?: AgentTraceEvent[] | null;
+  toolResults?: ToolResult[] | null;
+}) {
+  const events =
+    trace && trace.length > 0
+      ? trace
+      : (toolResults ?? []).map((result, index) =>
+          traceFromToolResult(result, index)
+        );
+  if (events.length === 0) return null;
+  const hasRunningStep = events.some((event) => event.status === "running");
 
   return (
-    <div className="mt-3 space-y-2">
-      {visibleResults.map((result, index) => {
-        if (result.tool === "generate_conversation_invoice") {
-          return <InvoiceCard key={`${result.tool}-${index}`} result={result} />;
-        }
-        return (
-          <div
-            key={`${result.tool}-${index}`}
-            className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700"
-          >
-            <div className="font-medium text-slate-800">{result.tool}</div>
-            <div className="mt-1">{result.message}</div>
+    <details
+      className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700"
+      open={hasRunningStep || undefined}
+    >
+      <summary className="cursor-pointer font-medium text-slate-700">
+        Agent 执行过程（{events.length}）
+      </summary>
+      <ol className="mt-3 space-y-2">
+        {events.map((event, index) => (
+          <AgentTraceItem key={`${event.id}-${index}`} event={event} />
+        ))}
+      </ol>
+      {toolResults?.map((result, index) =>
+        result.tool === "generate_conversation_invoice" ? (
+          <div className="mt-2" key={`${result.tool}-${index}`}>
+            <InvoiceCard result={result} />
           </div>
-        );
-      })}
-    </div>
+        ) : null
+      )}
+    </details>
+  );
+}
+
+function AgentTraceItem({ event }: { event: AgentTraceEvent }) {
+  const marker =
+    event.status === "running" ? "…" : event.status === "success" ? "✓" : "!";
+  const markerClass =
+    event.status === "running"
+      ? "border-sky-200 bg-sky-50 text-sky-700"
+      : event.status === "success"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : "border-red-200 bg-red-50 text-red-700";
+
+  return (
+    <li className="flex gap-2">
+      <span
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold ${markerClass}`}
+      >
+        {marker}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-slate-800">{event.title}</div>
+        {event.content && (
+          <div className="mt-0.5 text-slate-500">{event.content}</div>
+        )}
+        {event.type === "tool_call" && event.args !== undefined && (
+          <pre className="mt-1 max-h-28 overflow-auto rounded border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
+            {JSON.stringify(event.args, null, 2)}
+          </pre>
+        )}
+        {event.summary && (
+          <div className="mt-0.5 text-slate-600">{event.summary}</div>
+        )}
+        {event.sources && event.sources.length > 0 && (
+          <div className="mt-1 text-[11px] text-slate-500">
+            来源：{event.sources.map((source) => source.filename).join("、")}
+          </div>
+        )}
+      </div>
+    </li>
   );
 }
 

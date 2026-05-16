@@ -43,12 +43,25 @@ export interface ToolResult {
   };
 }
 
+export interface AgentTraceEvent {
+  id: string;
+  type: "agent_step" | "tool_call" | "tool_result";
+  title: string;
+  status: "running" | "success" | "error";
+  content?: string;
+  tool?: string;
+  args?: unknown;
+  summary?: string;
+  sources?: Source[];
+}
+
 export interface Message {
   id: number | string;
   role: "user" | "assistant" | "system";
   content: string;
   sources?: Source[] | null;
   tool_results?: ToolResult[] | null;
+  agent_trace?: AgentTraceEvent[] | null;
   used_rag?: boolean | null;
   created_at: string;
 }

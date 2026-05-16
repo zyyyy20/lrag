@@ -129,6 +129,8 @@ export interface ChatStreamDone {
 
 export interface ChatStreamHandlers {
   onMeta?: (meta: ChatStreamMeta) => void;
+  onAgentStep?: (event: import("./types").AgentTraceEvent) => void;
+  onToolCall?: (event: import("./types").AgentTraceEvent) => void;
   onDelta?: (delta: string) => void;
   onToolResult?: (result: import("./types").ToolResult) => void;
   onDone?: (done: ChatStreamDone) => void;
@@ -187,6 +189,10 @@ async function chatStream(
     }
     if (eventName === "meta") {
       handlers.onMeta?.(data as ChatStreamMeta);
+    } else if (eventName === "agent_step") {
+      handlers.onAgentStep?.(data as import("./types").AgentTraceEvent);
+    } else if (eventName === "tool_call") {
+      handlers.onToolCall?.(data as import("./types").AgentTraceEvent);
     } else if (eventName === "delta") {
       const content = (data as { content?: string }).content;
       if (typeof content === "string" && content.length > 0) {

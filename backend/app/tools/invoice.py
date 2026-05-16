@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -516,10 +517,13 @@ generate_conversation_invoice_impl = generate_conversation_invoice
 
 def build_runtime_generate_conversation_invoice_tool():
     @tool(args_schema=InvoiceArgs)
-    def generate_conversation_invoice(summary_token_budget: int = DEFAULT_SUMMARY_TOKEN_BUDGET) -> dict:
+    def generate_conversation_invoice(
+        summary_token_budget: int = DEFAULT_SUMMARY_TOKEN_BUDGET,
+        config: RunnableConfig = None,
+    ) -> dict:
         """Generate a paper-like HTML invoice for the current conversation."""
         result = generate_conversation_invoice_impl(
-            get_tool_context(),
+            get_tool_context(config),
             {"summary_token_budget": summary_token_budget},
         )
         return result.model_dump()

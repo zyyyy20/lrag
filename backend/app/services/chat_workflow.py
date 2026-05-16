@@ -300,6 +300,8 @@ def _stream_chat_events(
                     sources_payload = list(rag_meta["sources"])
                     notice = rag_meta["notice"]
                     yield ("meta", rag_meta)
+            elif kind in {"agent_step", "tool_call"}:
+                yield (kind, data)
 
         if agent_result is None:
             raise RuntimeError("Agent stream ended without a final result")

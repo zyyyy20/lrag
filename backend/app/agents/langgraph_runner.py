@@ -13,13 +13,29 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..schemas.chat import Source
 from ..tools.builder import build_runtime_tools
-from ..tools.runtime import clear_tool_context, reset_tool_context, set_tool_context
+from ..tools.runtime import (
+    clear_tool_context,
+    register_tool_context,
+    reset_tool_context,
+    set_tool_context,
+    unregister_tool_context,
+)
 from ..tools.types import ToolContext, ToolResult
 from .checkpoints import build_thread_config, get_checkpointer
 from .langgraph_memory import build_input_messages
 from .types import AgentRunResult
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_context_key(user_id: int, session_id: int) -> str:
+    return str(build_thread_config(user_id, session_id)["configurable"]["thread_id"])
+
+
+def _runtime_config(user_id: int, session_id: int) -> dict[str, Any]:
+    config = build_thread_config(user_id, session_id)
+    config["configurable"]["tool_context_key"] = _tool_context_key(user_id, session_id)
+    return config
 
 
 def _build_system_prompt() -> str:
@@ -75,6 +91,75 @@ def _message_text(content: Any) -> str:
             for item in content
         )
     return str(content or "")
+
+
+def _safe_tool_args(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _tool_display_title(tool_name: str) -> str:
+    titles = {
+        "retrieve_knowledge_base": "查询知识库",
+        "generate_conversation_invoice": "生成对话发票",
+    }
+    return titles.get(tool_name, tool_name)
+
+
+def _tool_call_events(message: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    raw_calls = list(getattr(message, "tool_calls", None) or [])
+    additional_kwargs = getattr(message, "additional_kwargs", None) or {}
+    if isinstance(additional_kwargs, dict):
+        raw_calls.extend(additional_kwargs.get("tool_calls") or [])
+
+    for call in raw_calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = str(
+            call.get("name")
+            or call.get("tool")
+            or function.get("name")
+            or "unknown"
+        )
+        call_id = str(call.get("id") or f"{name}:{len(events)}")
+        args = call.get("args")
+        if args is None:
+            args = function.get("arguments")
+        events.append(
+            {
+                "id": call_id,
+                "type": "tool_call",
+                "tool": name,
+                "title": _tool_display_title(name),
+                "args": _safe_tool_args(args or {}),
+                "status": "running",
+            }
+        )
+    return events
+
+
+def _agent_step(
+    step_id: str,
+    title: str,
+    *,
+    status: str = "running",
+    content: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": step_id,
+        "type": "agent_step",
+        "title": title,
+        "status": status,
+    }
+    if content:
+        payload["content"] = content
+    return payload
 
 
 def _messages_from_update(update: Any) -> list[Any]:
@@ -134,15 +219,18 @@ class LangGraphAgentRunner:
             current_user_message=user_message,
         )
         ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
+        key = _tool_context_key(user_id, session_id)
+        register_tool_context(key, ctx)
         token = set_tool_context(ctx)
         try:
             result = self.agent.invoke(
                 {"messages": input_messages},
-                config=build_thread_config(user_id, session_id),
+                config=_runtime_config(user_id, session_id),
             )
             return self._to_result(result)
         finally:
             reset_tool_context(token)
+            unregister_tool_context(key)
 
     def stream(
         self,
@@ -167,11 +255,26 @@ class LangGraphAgentRunner:
         notice: str | None = None
 
         ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
+        key = _tool_context_key(user_id, session_id)
+        register_tool_context(key, ctx)
         set_tool_context(ctx)
+        seen_tool_calls: set[str] = set()
+        analysis_finished = False
+        answer_started = False
+        yield (
+            "agent_step",
+            {
+                "id": "analysis",
+                "type": "agent_step",
+                "title": "分析用户问题",
+                "status": "running",
+                "content": "判断是否需要调用知识库或其他工具",
+            },
+        )
         try:
             for mode, chunk in self.agent.stream(
                 {"messages": input_messages},
-                config=build_thread_config(user_id, session_id),
+                config=_runtime_config(user_id, session_id),
                 stream_mode=["messages", "updates"],
             ):
                 if mode == "messages":
@@ -180,6 +283,27 @@ class LangGraphAgentRunner:
                         continue
                     text = _message_text(message_chunk.content)
                     if text:
+                        if not analysis_finished:
+                            analysis_finished = True
+                            yield (
+                                "agent_step",
+                                _agent_step(
+                                    "analysis",
+                                    "分析用户问题",
+                                    status="success",
+                                    content="已完成工具选择与上下文判断",
+                                ),
+                            )
+                        if not answer_started:
+                            answer_started = True
+                            yield (
+                                "agent_step",
+                                _agent_step(
+                                    "answer",
+                                    "生成回答",
+                                    content="基于当前上下文生成流式回复",
+                                ),
+                            )
                         delta_parts.append(text)
                         yield ("delta", {"content": text})
                     continue
@@ -188,6 +312,29 @@ class LangGraphAgentRunner:
                     continue
 
                 for message in _messages_from_update(chunk):
+                    if isinstance(message, AIMessage):
+                        for event in _tool_call_events(message):
+                            event_id = str(event["id"])
+                            if event_id in seen_tool_calls:
+                                continue
+                            seen_tool_calls.add(event_id)
+                            if not analysis_finished:
+                                analysis_finished = True
+                                yield (
+                                    "agent_step",
+                                    _agent_step(
+                                        "analysis",
+                                        "分析用户问题",
+                                        status="success",
+                                        content="已完成工具选择与上下文判断",
+                                    ),
+                                )
+                            yield ("tool_call", event)
+                        text = _message_text(message.content)
+                        if text:
+                            final_message_text = text
+                        continue
+
                     if isinstance(message, ToolMessage):
                         parsed = _parse_tool_payload(message.content)
                         if parsed is None:
@@ -199,14 +346,23 @@ class LangGraphAgentRunner:
                             if not used_rag:
                                 notice = parsed.message
                         yield ("tool_result", parsed)
-                    elif isinstance(message, AIMessage):
-                        text = _message_text(message.content)
-                        if text:
-                            final_message_text = text
         finally:
             clear_tool_context()
+            unregister_tool_context(key)
 
         final_answer = "".join(delta_parts).strip() or final_message_text.strip()
+        if not analysis_finished:
+            yield (
+                "agent_step",
+                _agent_step(
+                    "analysis",
+                    "分析用户问题",
+                    status="success",
+                    content="已完成工具选择与上下文判断",
+                ),
+            )
+        if answer_started:
+            yield ("agent_step", _agent_step("answer", "生成回答", status="success"))
         return AgentRunResult(
             final_answer=final_answer,
             tool_results=tool_results,

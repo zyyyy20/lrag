@@ -6,11 +6,79 @@ import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
 import type {
+  AgentTraceEvent,
   DocumentItem,
   KnowledgeBase,
   Message,
   SessionItem,
+  ToolResult,
 } from "@/lib/types";
+
+function traceEventFromToolResult(result: ToolResult): AgentTraceEvent {
+  const sources = Array.isArray(result.data?.sources)
+    ? (result.data.sources as AgentTraceEvent["sources"])
+    : [];
+  const title =
+    result.tool === "retrieve_knowledge_base"
+      ? "查询知识库"
+      : result.tool === "generate_conversation_invoice"
+        ? "生成对话发票"
+        : result.tool;
+  const summary =
+    result.tool === "retrieve_knowledge_base" && sources && sources.length > 0
+      ? `检索完成，命中 ${sources.length} 条相关内容`
+      : result.tool === "generate_conversation_invoice" && result.ok
+        ? "HTML 对话发票已生成"
+        : result.message;
+
+  return {
+    id: `result-${result.tool}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    type: "tool_result",
+    title,
+    status: result.ok ? "success" : "error",
+    tool: result.tool,
+    summary,
+    sources,
+  };
+}
+
+function sameTraceEvent(left: AgentTraceEvent, right: AgentTraceEvent): boolean {
+  if (left.id === right.id) return true;
+  if (
+    right.type === "tool_result" &&
+    left.type === "tool_call" &&
+    left.status === "running" &&
+    left.tool === right.tool
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function upsertTraceEvent(
+  trace: AgentTraceEvent[] | null | undefined,
+  event: AgentTraceEvent
+): AgentTraceEvent[] {
+  const current = [...(trace ?? [])];
+  let index = -1;
+  for (let i = current.length - 1; i >= 0; i -= 1) {
+    if (sameTraceEvent(current[i], event)) {
+      index = i;
+      break;
+    }
+  }
+  if (index === -1) return [...current, event];
+
+  current[index] = {
+    ...current[index],
+    ...event,
+    args: event.args ?? current[index].args,
+    content: event.content ?? current[index].content,
+    summary: event.summary ?? current[index].summary,
+    sources: event.sources ?? current[index].sources,
+  };
+  return current;
+}
 
 export default function HomePage() {
   // ---- Sessions ----
@@ -186,6 +254,7 @@ export default function HomePage() {
       content: "",
       used_rag: false,
       sources: [],
+      agent_trace: [],
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser, streamingAssistant]);
@@ -206,6 +275,24 @@ export default function HomePage() {
             )
           );
         },
+        onAgentStep: (event) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, agent_trace: upsertTraceEvent(m.agent_trace, event) }
+                : m
+            )
+          );
+        },
+        onToolCall: (event) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, agent_trace: upsertTraceEvent(m.agent_trace, event) }
+                : m
+            )
+          );
+        },
         onDelta: (delta) => {
           setMessages((prev) =>
             prev.map((m) =>
@@ -219,7 +306,14 @@ export default function HomePage() {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
-                ? { ...m, tool_results: [...(m.tool_results ?? []), result] }
+                ? {
+                    ...m,
+                    tool_results: [...(m.tool_results ?? []), result],
+                    agent_trace: upsertTraceEvent(
+                      m.agent_trace,
+                      traceEventFromToolResult(result)
+                    ),
+                  }
                 : m
             )
           );

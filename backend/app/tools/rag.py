@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -152,7 +153,11 @@ retrieve_knowledge_base_impl = retrieve_knowledge_base
 
 def build_runtime_retrieve_knowledge_base_tool():
     @tool(args_schema=RetrieveKnowledgeBaseArgs)
-    def retrieve_knowledge_base(query: str, top_k: int = 5) -> dict:
+    def retrieve_knowledge_base(
+        query: str,
+        top_k: int = 5,
+        config: RunnableConfig = None,
+    ) -> dict:
         """Retrieve relevant chunks from the knowledge base bound to the current session.
 
         Use this before answering any question that may refer to uploaded knowledge-base
@@ -163,7 +168,7 @@ def build_runtime_retrieve_knowledge_base_tool():
         knowledge-base conversation.
         """
         result = retrieve_knowledge_base_impl(
-            get_tool_context(),
+            get_tool_context(config),
             {"query": query, "top_k": top_k},
         )
         return result.model_dump()
