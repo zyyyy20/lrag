@@ -27,6 +27,9 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lrag}:${POSTGRES_PASSWORD:-lrag}@postgres:5432/${POSTGRES_DB:-lrag}
+      LANGGRAPH_CHECKPOINT_URL: postgresql://${POSTGRES_USER:-lrag}:${POSTGRES_PASSWORD:-lrag}@postgres:5432/${POSTGRES_DB:-lrag}
+      AGENT_BACKEND: ${AGENT_BACKEND:-langgraph}
+      PUBLIC_KB_WRITE_MODE: ${PUBLIC_KB_WRITE_MODE:-all}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:

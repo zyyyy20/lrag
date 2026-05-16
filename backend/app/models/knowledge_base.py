@@ -24,6 +24,12 @@ class KnowledgeBase(Base):
         nullable=False,
         index=True,
     )
+    created_by: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
@@ -46,4 +52,4 @@ class KnowledgeBase(Base):
         "Document",
         back_populates="knowledge_base",
     )
-    user = relationship("User", back_populates="knowledge_bases")
+    user = relationship("User", back_populates="knowledge_bases", foreign_keys=[user_id])

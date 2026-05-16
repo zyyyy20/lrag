@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str | None = None
+    llm_timeout_seconds: float = 45.0
+    llm_max_retries: int = 1
 
     # ----- Embedding（向量检索用） -----
     embedding_provider: str = "openai"
@@ -89,23 +91,14 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 120
 
-    # ----- 多轮对话记忆（见 memory_service / prompt_builder） -----
-    max_history_messages: int = 10
-    max_context_tokens: int = 4000
-
-    # ----- 调试：打印发给 LLM 的 messages（生产务必关闭） -----
-    log_llm_messages: bool = False
-    log_llm_message_max_chars: int = 800
-
     # ----- 文件上传 -----
     upload_dir: str = "/app/uploads"
     max_upload_mb: int = 20
 
-    enable_react_agent: bool = True
-    agent_calling_mode: str = "function_call"
-    react_agent_max_steps: int = 3
+    agent_backend: str = "langgraph"
+    langgraph_checkpoint_url: str | None = None
+    public_kb_write_mode: str = "all"
     enable_agent_rag: bool = True
-    agent_rag_observation_max_chars: int = 6000
     static_dir: str = "/app/static"
 
     @computed_field  # type: ignore[misc]

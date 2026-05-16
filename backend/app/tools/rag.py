@@ -3,13 +3,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
 from ..config import get_settings
 from ..models import ChatMode, KnowledgeBase
 from ..models import Session as ChatSession
 from ..schemas.chat import Source
 from ..services.memory_service import count_tokens
 from ..services.retrieval import RetrievedChunk, retrieve
-from .base import ToolContext, ToolResult, ToolSpec
+from .base import ToolContext, ToolResult
+from .runtime import get_tool_context
 
 TOOL_NAME = "retrieve_knowledge_base"
 MAX_CONTEXT_TOKENS = 1800
@@ -38,24 +42,10 @@ def _knowledge_base_is_valid(ctx: ToolContext, knowledge_base_id: int) -> bool:
         ctx.db.query(KnowledgeBase)
         .filter(
             KnowledgeBase.id == knowledge_base_id,
-            KnowledgeBase.user_id == ctx.user_id,
             KnowledgeBase.is_deleted.is_(False),
         )
         .one_or_none()
         is not None
-    )
-
-
-def rag_tool_available(ctx: ToolContext) -> bool:
-    if not get_settings().enable_agent_rag:
-        return False
-    session = _load_session(ctx)
-    return bool(
-        session
-        and not session.is_deleted
-        and session.chat_mode == ChatMode.rag
-        and session.knowledge_base_id is not None
-        and _knowledge_base_is_valid(ctx, session.knowledge_base_id)
     )
 
 
@@ -126,7 +116,6 @@ def retrieve_knowledge_base(ctx: ToolContext, arguments: dict[str, Any]) -> Tool
         ctx.db,
         query,
         knowledge_base_id=session.knowledge_base_id,
-        user_id=ctx.user_id,
         top_k=_safe_top_k(arguments.get("top_k")),
     )
     relevant = [c for c in chunks if c.score >= settings.rag_score_threshold]
@@ -153,30 +142,30 @@ def retrieve_knowledge_base(ctx: ToolContext, arguments: dict[str, Any]) -> Tool
     )
 
 
-retrieve_knowledge_base_tool = ToolSpec(
-    name=TOOL_NAME,
-    description=(
-        "Retrieve relevant chunks from the knowledge base bound to the current "
-        "session. Use it for questions that require uploaded documents or "
-        "knowledge-base content."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query rewritten from the user's latest question.",
-            },
-            "top_k": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 10,
-                "description": "Maximum number of chunks to retrieve.",
-            },
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    },
-    handler=retrieve_knowledge_base,
-    is_available=rag_tool_available,
-)
+class RetrieveKnowledgeBaseArgs(BaseModel):
+    query: str = Field(..., min_length=1, description="Search query for the current knowledge base.")
+    top_k: int = Field(default=5, ge=1, le=10, description="Maximum number of chunks to retrieve.")
+
+
+retrieve_knowledge_base_impl = retrieve_knowledge_base
+
+
+def build_runtime_retrieve_knowledge_base_tool():
+    @tool(args_schema=RetrieveKnowledgeBaseArgs)
+    def retrieve_knowledge_base(query: str, top_k: int = 5) -> dict:
+        """Retrieve relevant chunks from the knowledge base bound to the current session.
+
+        Use this before answering any question that may refer to uploaded knowledge-base
+        content, especially named people, organizations, projects, products, documents,
+        policies, clauses, domain terms, dates, amounts, identifiers, or short entity
+        questions like "Who is X?", "What is X?", "X是谁?", or "X是什么?".
+        The tool returns an unavailable result when the current session is not a RAG
+        knowledge-base conversation.
+        """
+        result = retrieve_knowledge_base_impl(
+            get_tool_context(),
+            {"query": query, "top_k": top_k},
+        )
+        return result.model_dump()
+
+    return retrieve_knowledge_base

@@ -26,7 +26,7 @@ def _kb_name(db: Session, kb_id: int | None, user_id: int) -> str | None:
         return None
     kb = (
         db.query(KnowledgeBase)
-        .filter(KnowledgeBase.id == kb_id, KnowledgeBase.user_id == user_id)
+        .filter(KnowledgeBase.id == kb_id, KnowledgeBase.is_deleted.is_(False))
         .one_or_none()
     )
     return kb.name if kb is not None else None
@@ -70,7 +70,7 @@ def create_session(
             db.query(KnowledgeBase)
             .filter(
                 KnowledgeBase.id == kb_id,
-                KnowledgeBase.user_id == current_user.id,
+                KnowledgeBase.is_deleted.is_(False),
             )
             .one_or_none()
         )

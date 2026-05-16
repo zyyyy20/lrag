@@ -34,13 +34,17 @@ class User(Base):
     )
 
     knowledge_bases: Mapped[List["KnowledgeBase"]] = relationship(  # noqa: F821
-        "KnowledgeBase", back_populates="user"
+        "KnowledgeBase",
+        back_populates="user",
+        foreign_keys="KnowledgeBase.user_id",
     )
     sessions: Mapped[List["Session"]] = relationship(  # noqa: F821
         "Session", back_populates="user"
     )
     documents: Mapped[List["Document"]] = relationship(  # noqa: F821
-        "Document", back_populates="user"
+        "Document",
+        back_populates="user",
+        foreign_keys="Document.user_id",
     )
     messages: Mapped[List["Message"]] = relationship(  # noqa: F821
         "Message", back_populates="user"

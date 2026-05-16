@@ -21,6 +21,7 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..database import get_db
 from ..dependencies.auth import get_current_user
 from ..models import Document, DocumentStatus, KnowledgeBase, User
@@ -34,6 +35,14 @@ from ..services.documents import (
 )
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+
+def _ensure_public_document_write_allowed(doc: Document | None, user_id: int) -> None:
+    mode = get_settings().public_kb_write_mode
+    if mode == "disabled":
+        raise HTTPException(status_code=403, detail="Public knowledge base writes are disabled")
+    if mode == "creator_only" and doc is not None and doc.created_by != user_id:
+        raise HTTPException(status_code=403, detail="Only the creator can modify this document")
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -52,12 +61,13 @@ async def upload_document(
         db.query(KnowledgeBase)
         .filter(
             KnowledgeBase.id == knowledge_base_id,
-            KnowledgeBase.user_id == current_user.id,
+            KnowledgeBase.is_deleted.is_(False),
         )
         .one_or_none()
     )
     if kb is None or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
+    _ensure_public_document_write_allowed(None, current_user.id)
 
     content = await file.read()
     try:
@@ -68,6 +78,7 @@ async def upload_document(
     stored_path = save_upload(file, content)
     doc = Document(
         user_id=current_user.id,
+        created_by=current_user.id,
         knowledge_base_id=knowledge_base_id,
         filename=file.filename or "upload",
         content_type=file.content_type or "application/octet-stream",
@@ -93,7 +104,6 @@ def list_documents(
     """文档列表；传 ``knowledge_base_id`` 时仅返回该库下未软删文档。"""
     q = db.query(Document).filter(
         Document.status != DocumentStatus.deleted,
-        Document.user_id == current_user.id,
     )
     if knowledge_base_id is not None:
         q = q.filter(Document.knowledge_base_id == knowledge_base_id)
@@ -109,9 +119,14 @@ def list_documents(
 def delete_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Response:
     """软删除文档及其 chunk；204 无响应体（满足 FastAPI 对 204 的约束）。"""
-    ok = soft_delete_document(document_id, current_user.id)
+    doc = db.query(Document).filter(Document.id == document_id).one_or_none()
+    if doc is None or doc.status == DocumentStatus.deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_public_document_write_allowed(doc, current_user.id)
+    ok = soft_delete_document(document_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

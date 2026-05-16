@@ -38,7 +38,7 @@ def retrieve(
     db: Session,
     query: str,
     knowledge_base_id: int,
-    user_id: int,
+    user_id: int | None = None,
     top_k: int | None = None,
 ) -> List[RetrievedChunk]:
     """在指定知识库内执行向量检索，返回 top_k 条候选 chunk。
@@ -81,9 +81,7 @@ def retrieve(
             DocumentChunk.is_deleted.is_(False),
             Document.status == DocumentStatus.indexed,
             Document.knowledge_base_id == knowledge_base_id,
-            Document.user_id == user_id,
             KnowledgeBase.is_deleted.is_(False),
-            KnowledgeBase.user_id == user_id,
         )
         .order_by(distance.asc())
         .limit(top_k)

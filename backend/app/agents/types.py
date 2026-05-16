@@ -2,17 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from ..schemas.chat import Source
 from ..tools.base import ToolResult
-
-
-@dataclass(frozen=True)
-class AgentDecision:
-    tool_name: str | None
-    arguments: dict[str, Any] = field(default_factory=dict)
-    final_answer: str | None = None
 
 
 @dataclass(frozen=True)

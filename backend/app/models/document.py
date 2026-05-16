@@ -35,6 +35,12 @@ class Document(Base):
         nullable=False,
         index=True,
     )
+    created_by: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     knowledge_base_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
@@ -67,7 +73,7 @@ class Document(Base):
     )
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
-    user = relationship("User", back_populates="documents")
+    user = relationship("User", back_populates="documents", foreign_keys=[user_id])
     chunks: Mapped[List["DocumentChunk"]] = relationship(  # noqa: F821
         "DocumentChunk",
         back_populates="document",

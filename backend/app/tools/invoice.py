@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -16,7 +18,8 @@ from ..models import Message
 from ..models import Session as ChatSession
 from ..services.llm import get_llm
 from ..services.memory_service import count_tokens
-from .base import ToolContext, ToolResult, ToolSpec
+from .base import ToolContext, ToolResult
+from .runtime import get_tool_context
 
 logger = logging.getLogger(__name__)
 
@@ -499,24 +502,26 @@ def generate_conversation_invoice(
     )
 
 
-invoice_tool = ToolSpec(
-    name=TOOL_NAME,
-    description=(
-        "Generate a paper-like HTML invoice for the current conversation, including "
-        "estimated token usage and a concise conversation summary."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "summary_token_budget": {
-                "type": "integer",
-                "minimum": 100,
-                "maximum": MAX_SUMMARY_TOKEN_BUDGET,
-                "description": "Approximate token budget for the conversation summary.",
-            }
-        },
-        "required": [],
-        "additionalProperties": False,
-    },
-    handler=generate_conversation_invoice,
-)
+class InvoiceArgs(BaseModel):
+    summary_token_budget: int = Field(
+        default=DEFAULT_SUMMARY_TOKEN_BUDGET,
+        ge=100,
+        le=MAX_SUMMARY_TOKEN_BUDGET,
+        description="Approximate token budget for the generated conversation summary.",
+    )
+
+
+generate_conversation_invoice_impl = generate_conversation_invoice
+
+
+def build_runtime_generate_conversation_invoice_tool():
+    @tool(args_schema=InvoiceArgs)
+    def generate_conversation_invoice(summary_token_budget: int = DEFAULT_SUMMARY_TOKEN_BUDGET) -> dict:
+        """Generate a paper-like HTML invoice for the current conversation."""
+        result = generate_conversation_invoice_impl(
+            get_tool_context(),
+            {"summary_token_budget": summary_token_budget},
+        )
+        return result.model_dump()
+
+    return generate_conversation_invoice
