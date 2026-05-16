@@ -112,6 +112,70 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-")[:80] or "session"
 
 
+def _money_line(label: str, value: str, width: int = 42) -> str:
+    label = label[:width]
+    gap = max(1, width - len(label) - len(value))
+    return f"{label}{' ' * gap}{value}"
+
+
+def _barcode(seed: str, width: int = 36) -> str:
+    bars = []
+    for ch in seed:
+        value = ord(ch)
+        bars.append("|" * (value % 4 + 1))
+        bars.append(" " if value % 3 else "  ")
+        if sum(len(item) for item in bars) >= width:
+            break
+    return "".join(bars)[:width].ljust(width, "|")
+
+
+def _receipt_text(
+    *,
+    invoice_no: str,
+    session: ChatSession,
+    generated_at: datetime,
+    user_count: int,
+    assistant_count: int,
+    total_tokens: int,
+    prompt_tokens: int,
+    completion_tokens: int,
+    summary_tokens: int,
+) -> str:
+    generated = generated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+    line = "-" * 42
+    return "\n".join(
+        [
+            "              LRAG TOKEN 小票",
+            "          感谢使用 LRAG 对话服务",
+            "",
+            _money_line("小票编号", invoice_no),
+            _money_line("生成时间", generated),
+            _money_line("用户", f"游客-{session.user_id}"),
+            _money_line("会话编号", str(session.id)),
+            line,
+            _money_line("项目", "TOKEN"),
+            line,
+            _money_line("用户输入", f"{prompt_tokens:,}"),
+            _money_line("助手输出", f"{completion_tokens:,}"),
+            _money_line("小票摘要", f"{summary_tokens:,}"),
+            _money_line("工具额外开销", "未记录"),
+            line,
+            _money_line("合计", f"{total_tokens:,}"),
+            line,
+            _money_line("消息总数", f"{user_count + assistant_count}"),
+            _money_line("用户消息", str(user_count)),
+            _money_line("助手消息", str(assistant_count)),
+            _money_line("统计口径", "估算"),
+            line,
+            "本小票用于调试和用量展示。",
+            "Token 数量为服务端估算值，非结算凭证。",
+            "",
+            _barcode(invoice_no),
+            invoice_no,
+        ]
+    )
+
+
 def _paper_html(
     *,
     invoice_no: str,
@@ -464,11 +528,22 @@ def generate_conversation_invoice(
     completion_tokens = sum(count_tokens(m.content or "") for m in assistant_messages)
     summary = _summarize(messages, budget)
     summary_tokens = count_tokens(summary)
-    total_tokens = prompt_tokens + completion_tokens
+    total_tokens = prompt_tokens + completion_tokens + summary_tokens
 
     now = datetime.now(timezone.utc)
     invoice_no = f"LRAG-{now.strftime('%Y%m%d%H%M%S')}-{ctx.session_id}-{secrets.token_hex(3)}"
     filename = f"{_slug(invoice_no)}.html"
+    receipt_text = _receipt_text(
+        invoice_no=invoice_no,
+        session=session,
+        generated_at=now,
+        user_count=len(user_messages),
+        assistant_count=len(assistant_messages),
+        total_tokens=total_tokens,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        summary_tokens=summary_tokens,
+    )
     path = _invoice_dir() / filename
     path.write_text(
         _paper_html(
@@ -492,6 +567,7 @@ def generate_conversation_invoice(
         message="已生成本次对话用量发票。",
         data={
             "title": "对话用量发票",
+            "receipt_text": receipt_text,
             "html_url": f"/static/invoices/{filename}",
             "invoice_no": invoice_no,
             "token_total": total_tokens,

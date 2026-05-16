@@ -32,6 +32,7 @@ export interface ToolResult {
   message: string;
   data: {
     title?: string;
+    receipt_text?: string;
     html_url?: string;
     invoice_no?: string;
     token_total?: number;

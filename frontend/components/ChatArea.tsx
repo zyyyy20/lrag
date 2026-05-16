@@ -284,6 +284,8 @@ function AgentTraceItem({ event }: { event: AgentTraceEvent }) {
 function InvoiceCard({ result }: { result: ToolResult }) {
   const htmlUrl =
     typeof result.data.html_url === "string" ? apiUrl(result.data.html_url) : null;
+  const receiptText =
+    typeof result.data.receipt_text === "string" ? result.data.receipt_text : null;
   const tokenTotal =
     typeof result.data.token_total === "number" ? result.data.token_total : null;
   const invoiceNo =
@@ -313,6 +315,11 @@ function InvoiceCard({ result }: { result: ToolResult }) {
           </a>
         )}
       </div>
+      {receiptText && (
+        <pre className="mt-3 max-h-80 overflow-auto rounded border border-stone-300 bg-stone-950 p-3 font-mono text-[11px] leading-relaxed text-stone-100 shadow-inner">
+          {receiptText}
+        </pre>
+      )}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div className="rounded border border-amber-200 bg-white/70 px-2 py-1.5">
           <div className="text-[11px] text-amber-700">Total tokens</div>
