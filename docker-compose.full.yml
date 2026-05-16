@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lrag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lrag}
+      POSTGRES_DB: ${POSTGRES_DB:-lrag}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lrag} -d ${POSTGRES_DB:-lrag}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: lrag-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lrag}:${POSTGRES_PASSWORD:-lrag}@postgres:5432/${POSTGRES_DB:-lrag}
+      LANGGRAPH_CHECKPOINT_URL: postgresql://${POSTGRES_USER:-lrag}:${POSTGRES_PASSWORD:-lrag}@postgres:5432/${POSTGRES_DB:-lrag}
+      AGENT_BACKEND: ${AGENT_BACKEND:-langgraph}
+      PUBLIC_KB_WRITE_MODE: ${PUBLIC_KB_WRITE_MODE:-all}
+      UPLOAD_DIR: /app/uploads
+      STATIC_DIR: /app/static
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+      - static:/app/static
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    container_name: lrag-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  uploads:
+  static:
