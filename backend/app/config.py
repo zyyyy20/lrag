@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     max_upload_mb: int = 20
 
     enable_react_agent: bool = True
+    agent_calling_mode: str = "function_call"
     react_agent_max_steps: int = 3
     enable_agent_rag: bool = True
     agent_rag_observation_max_chars: int = 6000

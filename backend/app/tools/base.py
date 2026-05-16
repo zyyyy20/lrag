@@ -54,6 +54,16 @@ class ToolSpec:
     handler: ToolHandler
     is_available: ToolAvailability | None = None
 
+    def to_openai_tool(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
     def prompt_description(self) -> str:
         return (
             f"- {self.name}: {self.description}\n"

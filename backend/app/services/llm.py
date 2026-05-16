@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Generator, List
+from typing import Any, Generator, List
 
 from openai import OpenAI
 
@@ -69,6 +69,24 @@ class LLMClient:
             max_tokens=max_tokens,
         )
         return (resp.choices[0].message.content or "").strip()
+
+    def chat_with_tools(
+        self,
+        messages: List[dict],
+        tools: List[dict[str, Any]],
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+    ):
+        """Chat completion that may return structured tool_calls."""
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message
 
     def chat_stream(
         self,
