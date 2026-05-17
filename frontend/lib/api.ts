@@ -119,6 +119,8 @@ export interface ChatStreamMeta {
   session_id: number;
   used_rag: boolean;
   sources: import("./types").Source[];
+  used_web?: boolean;
+  web_sources?: import("./types").WebSource[];
   notice?: string | null;
 }
 
@@ -127,8 +129,24 @@ export interface ChatStreamDone {
   title: string;
 }
 
+export type ChatStreamSources =
+  | {
+      session_id: number;
+      kind: "rag";
+      used_rag: boolean;
+      sources: import("./types").Source[];
+      notice?: string | null;
+    }
+  | {
+      session_id: number;
+      kind: "web";
+      used_web: boolean;
+      web_sources: import("./types").WebSource[];
+    };
+
 export interface ChatStreamHandlers {
   onMeta?: (meta: ChatStreamMeta) => void;
+  onSources?: (sources: ChatStreamSources) => void;
   onAgentStep?: (event: import("./types").AgentTraceEvent) => void;
   onToolCall?: (event: import("./types").AgentTraceEvent) => void;
   onDelta?: (delta: string) => void;
@@ -189,6 +207,8 @@ async function chatStream(
     }
     if (eventName === "meta") {
       handlers.onMeta?.(data as ChatStreamMeta);
+    } else if (eventName === "sources") {
+      handlers.onSources?.(data as ChatStreamSources);
     } else if (eventName === "agent_step") {
       handlers.onAgentStep?.(data as import("./types").AgentTraceEvent);
     } else if (eventName === "tool_call") {

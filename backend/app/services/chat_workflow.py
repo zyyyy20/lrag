@@ -18,6 +18,8 @@ from .long_term_memory import (
     remember_turn,
     search_user_memories,
 )
+from ..agents.web_sources import extract_web_sources
+from ..tools.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +163,58 @@ def _rag_meta_from_tool_payload(session_id: int, payload: dict) -> dict | None:
     }
 
 
+def _tool_result_from_payload(payload: dict) -> ToolResult:
+    return ToolResult(
+        tool=str(payload.get("tool") or "unknown"),
+        ok=bool(payload.get("ok")),
+        data=dict(payload.get("data") or {}),
+        message=str(payload.get("message") or ""),
+        type=str(payload.get("type") or "tool_result"),
+    )
+
+
+def _sources_event_from_tool_payload(session_id: int, payload: dict) -> dict | None:
+    if payload.get("tool") == "retrieve_knowledge_base":
+        data = payload.get("data") or {}
+        sources = list(data.get("sources") or [])
+        if not sources and not payload.get("message"):
+            return None
+        return {
+            "session_id": session_id,
+            "kind": "rag",
+            "used_rag": bool(data.get("used_rag")),
+            "sources": sources,
+            "notice": None if data.get("used_rag") else payload.get("message"),
+        }
+
+    web_sources = extract_web_sources(_tool_result_from_payload(payload))
+    if not web_sources:
+        return None
+    return {
+        "session_id": session_id,
+        "kind": "web",
+        "used_web": True,
+        "web_sources": [
+            source.model_dump(mode="json") for source in web_sources
+        ],
+    }
+
+
+def _web_meta_from_result(session_id: int, agent_result) -> dict:
+    return {
+        "session_id": session_id,
+        "used_rag": agent_result.used_rag,
+        "sources": [
+            source.model_dump(mode="json") for source in agent_result.sources
+        ],
+        "used_web": agent_result.used_web,
+        "web_sources": [
+            source.model_dump(mode="json") for source in agent_result.web_sources
+        ],
+        "notice": agent_result.notice,
+    }
+
+
 def complete_chat(
     db: Session,
     *,
@@ -190,6 +244,8 @@ def complete_chat(
     answer = agent_result.final_answer.strip() or _empty_answer_message()
     used_rag = agent_result.used_rag
     sources = agent_result.sources
+    used_web = agent_result.used_web
+    web_sources = agent_result.web_sources
     notice = agent_result.notice
     tool_results = [item.model_dump() for item in agent_result.tool_results]
 
@@ -217,6 +273,8 @@ def complete_chat(
         answer=answer,
         used_rag=used_rag,
         sources=sources,
+        used_web=used_web,
+        web_sources=web_sources,
         notice=notice,
         tool_results=tool_results,
     )
@@ -259,7 +317,9 @@ def _stream_chat_events(
     is_first_message: bool,
 ) -> Generator[StreamEvent, None, None]:
     used_rag = False
+    used_web = False
     sources_payload: list[dict] = []
+    web_sources_payload: list[dict] = []
     notice: str | None = None
     full_text_parts: list[str] = []
     final_title: str | None = None
@@ -270,6 +330,8 @@ def _stream_chat_events(
             "session_id": session_id,
             "used_rag": used_rag,
             "sources": sources_payload,
+            "used_web": used_web,
+            "web_sources": web_sources_payload,
             "notice": notice,
         },
     )
@@ -313,6 +375,9 @@ def _stream_chat_events(
                 payload = data.model_dump()
                 tool_results_payload.append(payload)
                 yield ("tool_result", payload)
+                sources_event = _sources_event_from_tool_payload(session_id, payload)
+                if sources_event is not None:
+                    yield ("sources", sources_event)
                 rag_meta = _rag_meta_from_tool_payload(session_id, payload)
                 if rag_meta is not None:
                     used_rag = bool(rag_meta["used_rag"])
@@ -331,8 +396,12 @@ def _stream_chat_events(
             or _empty_answer_message()
         )
         used_rag = agent_result.used_rag
+        used_web = agent_result.used_web
         sources_payload = [
             source.model_dump(mode="json") for source in agent_result.sources
+        ]
+        web_sources_payload = [
+            source.model_dump(mode="json") for source in agent_result.web_sources
         ]
         notice = agent_result.notice
         if (used_rag or sources_payload or notice) and not any(
@@ -345,9 +414,13 @@ def _stream_chat_events(
                     "session_id": session_id,
                     "used_rag": used_rag,
                     "sources": sources_payload,
+                    "used_web": used_web,
+                    "web_sources": web_sources_payload,
                     "notice": notice,
                 },
             )
+        if used_web or web_sources_payload:
+            yield ("meta", _web_meta_from_result(session_id, agent_result))
 
         _save_assistant_message(
             db,

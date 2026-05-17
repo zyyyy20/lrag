@@ -25,6 +25,14 @@ export interface Source {
   content_preview: string;
 }
 
+export interface WebSource {
+  title: string;
+  url: string;
+  content_preview?: string | null;
+  score?: number | null;
+  source_tool?: string;
+}
+
 export interface ToolResult {
   type: "tool_result";
   tool: string;
@@ -54,6 +62,7 @@ export interface AgentTraceEvent {
   args?: unknown;
   summary?: string;
   sources?: Source[];
+  web_sources?: WebSource[];
 }
 
 export interface Message {
@@ -61,9 +70,11 @@ export interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   sources?: Source[] | null;
+  web_sources?: WebSource[] | null;
   tool_results?: ToolResult[] | null;
   agent_trace?: AgentTraceEvent[] | null;
   used_rag?: boolean | null;
+  used_web?: boolean | null;
   created_at: string;
 }
 
@@ -86,6 +97,8 @@ export interface ChatResponse {
   answer: string;
   used_rag: boolean;
   sources: Source[];
+  used_web?: boolean;
+  web_sources?: WebSource[];
   notice?: string | null;
   tool_results?: ToolResult[];
 }

@@ -12,23 +12,83 @@ import type {
   Message,
   SessionItem,
   ToolResult,
+  WebSource,
 } from "@/lib/types";
+
+const WEB_SOURCE_TOOLS = new Set([
+  "tavily_search",
+  "tavily_extract",
+  "tavily_research",
+]);
+
+function webSourcesFromToolResult(result: ToolResult): WebSource[] {
+  if (!WEB_SOURCE_TOOLS.has(result.tool)) return [];
+  const rawResults = result.data?.results;
+  const items = Array.isArray(rawResults)
+    ? rawResults
+    : typeof result.data?.url === "string"
+      ? [result.data]
+      : [];
+  const seen = new Set<string>();
+  const sources: WebSource[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const url = typeof item.url === "string" ? item.url : "";
+    if (!url || seen.has(url)) continue;
+    sources.push({
+      title: typeof item.title === "string" && item.title ? item.title : url,
+      url,
+      content_preview:
+        typeof item.content === "string"
+          ? item.content
+          : typeof item.raw_content === "string"
+            ? item.raw_content
+            : null,
+      score: typeof item.score === "number" ? item.score : null,
+      source_tool: result.tool,
+    });
+    seen.add(url);
+  }
+  return sources;
+}
+
+function mergeWebSources(
+  current: WebSource[] | null | undefined,
+  incoming: WebSource[]
+): WebSource[] {
+  const merged = [...(current ?? [])];
+  const seen = new Set(merged.map((source) => source.url));
+  for (const source of incoming) {
+    if (seen.has(source.url)) continue;
+    merged.push(source);
+    seen.add(source.url);
+  }
+  return merged;
+}
 
 function traceEventFromToolResult(result: ToolResult): AgentTraceEvent {
   const sources = Array.isArray(result.data?.sources)
     ? (result.data.sources as AgentTraceEvent["sources"])
     : [];
+  const webSources = webSourcesFromToolResult(result);
   const title =
     result.tool === "retrieve_knowledge_base"
       ? "查询知识库"
       : result.tool === "generate_conversation_invoice"
         ? "生成对话发票"
+        : result.tool === "tavily_search"
+          ? "联网搜索"
+          : result.tool === "tavily_extract"
+            ? "读取网页"
         : result.tool;
   const summary =
     result.tool === "retrieve_knowledge_base" && sources && sources.length > 0
       ? `检索完成，命中 ${sources.length} 条相关内容`
       : result.tool === "generate_conversation_invoice" && result.ok
         ? "HTML 对话发票已生成"
+        : webSources.length > 0
+          ? `检索完成，找到 ${webSources.length} 个网页来源`
         : result.message;
 
   return {
@@ -39,6 +99,7 @@ function traceEventFromToolResult(result: ToolResult): AgentTraceEvent {
     tool: result.tool,
     summary,
     sources,
+    web_sources: webSources,
   };
 }
 
@@ -254,6 +315,8 @@ export default function HomePage() {
       content: "",
       used_rag: false,
       sources: [],
+      used_web: false,
+      web_sources: [],
       agent_trace: [],
       created_at: new Date().toISOString(),
     };
@@ -271,6 +334,51 @@ export default function HomePage() {
             prev.map((m) =>
               m.id === assistantId
                 ? { ...m, used_rag: meta.used_rag, sources: meta.sources }
+                : m
+            )
+          );
+          if (meta.web_sources) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      used_web: Boolean(meta.used_web),
+                      web_sources: meta.web_sources ?? [],
+                    }
+                  : m
+              )
+            );
+          }
+        },
+        onSources: (sourcesEvent) => {
+          receivedSessionId = sourcesEvent.session_id;
+          if (sourcesEvent.kind === "rag") {
+            if (sourcesEvent.notice) setChatNotice(sourcesEvent.notice);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      used_rag: sourcesEvent.used_rag,
+                      sources: sourcesEvent.sources,
+                    }
+                  : m
+              )
+            );
+            return;
+          }
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    used_web: sourcesEvent.used_web,
+                    web_sources: mergeWebSources(
+                      m.web_sources,
+                      sourcesEvent.web_sources
+                    ),
+                  }
                 : m
             )
           );
@@ -303,12 +411,15 @@ export default function HomePage() {
           );
         },
         onToolResult: (result) => {
+          const webSources = webSourcesFromToolResult(result);
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
                 ? {
                     ...m,
                     tool_results: [...(m.tool_results ?? []), result],
+                    used_web: m.used_web || webSources.length > 0,
+                    web_sources: mergeWebSources(m.web_sources, webSources),
                     agent_trace: upsertTraceEvent(
                       m.agent_trace,
                       traceEventFromToolResult(result)

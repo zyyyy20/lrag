@@ -8,6 +8,7 @@ import type {
   SessionItem,
   Source,
   ToolResult,
+  WebSource,
 } from "@/lib/types";
 
 interface Props {
@@ -163,6 +164,9 @@ function MessageBubble({
         {!isUser && message.used_rag && message.sources && message.sources.length > 0 && (
           <SourcesView sources={message.sources} />
         )}
+        {!isUser && message.used_web && message.web_sources && message.web_sources.length > 0 && (
+          <WebSourcesView sources={message.web_sources} />
+        )}
         {!isUser && (
           <AgentTraceView
             trace={message.agent_trace}
@@ -177,17 +181,24 @@ function MessageBubble({
 function traceFromToolResult(result: ToolResult, index: number): AgentTraceEvent {
   const rawSources = result.data?.sources;
   const sources = Array.isArray(rawSources) ? (rawSources as Source[]) : [];
+  const webSources = webSourcesFromToolResult(result);
   const title =
     result.tool === "retrieve_knowledge_base"
       ? "查询知识库"
       : result.tool === "generate_conversation_invoice"
         ? "生成对话发票"
+        : result.tool === "tavily_search"
+          ? "联网搜索"
+          : result.tool === "tavily_extract"
+            ? "读取网页"
         : result.tool;
   const summary =
     result.tool === "retrieve_knowledge_base" && sources.length > 0
       ? `检索完成，命中 ${sources.length} 条相关内容`
       : result.tool === "generate_conversation_invoice" && result.ok
         ? "HTML 对话发票已生成"
+        : webSources.length > 0
+          ? `检索完成，找到 ${webSources.length} 个网页来源`
         : result.message;
 
   return {
@@ -198,7 +209,46 @@ function traceFromToolResult(result: ToolResult, index: number): AgentTraceEvent
     tool: result.tool,
     summary,
     sources,
+    web_sources: webSources,
   };
+}
+
+const WEB_SOURCE_TOOLS = new Set([
+  "tavily_search",
+  "tavily_extract",
+  "tavily_research",
+]);
+
+function webSourcesFromToolResult(result: ToolResult): WebSource[] {
+  if (!WEB_SOURCE_TOOLS.has(result.tool)) return [];
+  const rawResults = result.data?.results;
+  const items = Array.isArray(rawResults)
+    ? rawResults
+    : typeof result.data?.url === "string"
+      ? [result.data]
+      : [];
+  const seen = new Set<string>();
+  const sources: WebSource[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const url = typeof item.url === "string" ? item.url : "";
+    if (!url || seen.has(url)) continue;
+    sources.push({
+      title: typeof item.title === "string" && item.title ? item.title : url,
+      url,
+      content_preview:
+        typeof item.content === "string"
+          ? item.content
+          : typeof item.raw_content === "string"
+            ? item.raw_content
+            : null,
+      score: typeof item.score === "number" ? item.score : null,
+      source_tool: result.tool,
+    });
+    seen.add(url);
+  }
+  return sources;
 }
 
 function AgentTraceView({
@@ -274,6 +324,11 @@ function AgentTraceItem({ event }: { event: AgentTraceEvent }) {
         {event.sources && event.sources.length > 0 && (
           <div className="mt-1 text-[11px] text-slate-500">
             来源：{event.sources.map((source) => source.filename).join("、")}
+          </div>
+        )}
+        {event.web_sources && event.web_sources.length > 0 && (
+          <div className="mt-1 text-[11px] text-slate-500">
+            网页来源：{event.web_sources.map((source) => source.title).join("、")}
           </div>
         )}
       </div>
@@ -360,6 +415,46 @@ function SourcesView({ sources }: { sources: Source[] }) {
           </li>
         ))}
       </ul>
+    </details>
+  );
+}
+
+function WebSourcesView({ sources }: { sources: WebSource[] }) {
+  return (
+    <details className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-2 text-xs text-slate-700">
+      <summary className="cursor-pointer font-medium text-sky-800">
+        联网来源（{sources.length}）
+      </summary>
+      <ol className="mt-2 space-y-2">
+        {sources.map((source, index) => (
+          <li key={`${source.url}-${index}`} className="rounded border border-sky-100 bg-white p-2">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-semibold text-sky-700">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block truncate font-medium text-sky-800 hover:underline"
+                  title={source.title}
+                >
+                  {source.title}
+                </a>
+                <div className="mt-0.5 truncate text-[11px] text-slate-400">
+                  {source.url}
+                </div>
+                {source.content_preview && (
+                  <p className="mt-1 line-clamp-2 text-[12px] text-slate-600">
+                    {source.content_preview}
+                  </p>
+                )}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
     </details>
   );
 }

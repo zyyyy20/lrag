@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..schemas.chat import Source
+from ..schemas.chat import Source, WebSource
 from ..tools.base import ToolResult
 
 
@@ -13,6 +13,8 @@ class AgentRunResult:
     tool_results: list[ToolResult] = field(default_factory=list)
     used_rag: bool = False
     sources: list[Source] = field(default_factory=list)
+    used_web: bool = False
+    web_sources: list[WebSource] = field(default_factory=list)
     notice: str | None = None
 
     @property

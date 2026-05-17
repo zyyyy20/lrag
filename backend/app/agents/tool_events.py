@@ -20,9 +20,16 @@ def tool_result_from_payload(payload: dict[str, Any]) -> ToolResult:
     )
 
 
-def parse_tool_payload(content: Any) -> ToolResult | None:
+def parse_tool_payload(content: Any, tool_name: str | None = None) -> ToolResult | None:
     if isinstance(content, dict):
-        return tool_result_from_payload(content)
+        if "tool" in content or "data" in content or "ok" in content:
+            return tool_result_from_payload(content)
+        return ToolResult(
+            tool=tool_name or "unknown",
+            ok=True,
+            data=content,
+            message="",
+        )
     if isinstance(content, list):
         text = "".join(
             str(item.get("text", "")) if isinstance(item, dict) else str(item)
@@ -37,7 +44,14 @@ def parse_tool_payload(content: Any) -> ToolResult | None:
         return None
     if not isinstance(payload, dict):
         return None
-    return tool_result_from_payload(payload)
+    if "tool" in payload or "data" in payload or "ok" in payload:
+        return tool_result_from_payload(payload)
+    return ToolResult(
+        tool=tool_name or "unknown",
+        ok=True,
+        data=payload,
+        message="",
+    )
 
 
 def safe_tool_args(value: Any) -> Any:

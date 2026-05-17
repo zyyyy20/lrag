@@ -9,7 +9,7 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..schemas.chat import Source
+from ..schemas.chat import Source, WebSource
 from ..tools.builder import build_runtime_tools
 from ..tools.runtime import (
     clear_tool_context,
@@ -25,6 +25,7 @@ from .prompts import build_base_system_prompt, build_system_prompt
 from .sources import extract_sources
 from .tool_events import parse_tool_payload, tool_call_events
 from .types import AgentRunResult
+from .web_sources import extract_web_sources
 
 
 def _tool_context_key(user_id: int, session_id: int) -> str:
@@ -77,6 +78,20 @@ def _messages_from_update(update: Any) -> list[Any]:
             if isinstance(child, dict):
                 messages.extend(_messages_from_update(child))
     return messages
+
+
+def _merge_web_sources(
+    existing: list[WebSource],
+    incoming: list[WebSource],
+) -> list[WebSource]:
+    seen = {source.url for source in existing}
+    merged = list(existing)
+    for source in incoming:
+        if source.url in seen:
+            continue
+        merged.append(source)
+        seen.add(source.url)
+    return merged
 
 
 class LangGraphAgentRunner:
@@ -162,6 +177,8 @@ class LangGraphAgentRunner:
         tool_results: list[ToolResult] = []
         used_rag = False
         sources: list[Source] = []
+        used_web = False
+        web_sources: list[WebSource] = []
         notice: str | None = None
 
         ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
@@ -246,7 +263,10 @@ class LangGraphAgentRunner:
                         continue
 
                     if isinstance(message, ToolMessage):
-                        parsed = parse_tool_payload(message.content)
+                        parsed = parse_tool_payload(
+                            message.content,
+                            tool_name=getattr(message, "name", None),
+                        )
                         if parsed is None:
                             continue
                         tool_results.append(parsed)
@@ -255,6 +275,13 @@ class LangGraphAgentRunner:
                             sources = extract_sources(parsed)
                             if not used_rag:
                                 notice = parsed.message
+                        new_web_sources = extract_web_sources(parsed)
+                        if new_web_sources:
+                            web_sources = _merge_web_sources(
+                                web_sources,
+                                new_web_sources,
+                            )
+                            used_web = True
                         yield ("tool_result", parsed)
         finally:
             clear_tool_context()
@@ -278,6 +305,8 @@ class LangGraphAgentRunner:
             tool_results=tool_results,
             used_rag=used_rag,
             sources=sources,
+            used_web=used_web,
+            web_sources=web_sources,
             notice=notice,
         )
 
@@ -287,11 +316,16 @@ class LangGraphAgentRunner:
         tool_results: list[ToolResult] = []
         used_rag = False
         sources: list[Source] = []
+        used_web = False
+        web_sources: list[WebSource] = []
         notice: str | None = None
 
         for message in messages:
             if isinstance(message, ToolMessage):
-                parsed = parse_tool_payload(message.content)
+                parsed = parse_tool_payload(
+                    message.content,
+                    tool_name=getattr(message, "name", None),
+                )
                 if parsed is None:
                     continue
                 tool_results.append(parsed)
@@ -300,6 +334,10 @@ class LangGraphAgentRunner:
                     sources = extract_sources(parsed)
                     if not used_rag:
                         notice = parsed.message
+                new_web_sources = extract_web_sources(parsed)
+                if new_web_sources:
+                    web_sources = _merge_web_sources(web_sources, new_web_sources)
+                    used_web = True
             elif isinstance(message, AIMessage) and message.content:
                 final_answer = (
                     message.content
@@ -314,5 +352,7 @@ class LangGraphAgentRunner:
             tool_results=tool_results,
             used_rag=used_rag,
             sources=sources,
+            used_web=used_web,
+            web_sources=web_sources,
             notice=notice,
         )
