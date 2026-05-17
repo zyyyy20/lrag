@@ -13,6 +13,11 @@ from ..models import ChatMode, Message
 from ..models import Session as ChatSession
 from ..schemas.chat import ChatRequest, ChatResponse
 from .llm import get_llm
+from .long_term_memory import (
+    format_memories_for_prompt,
+    remember_turn,
+    search_user_memories,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +177,15 @@ def complete_chat(
     )
 
     runner = get_agent_runner()
+    long_term_memory_context = format_memories_for_prompt(
+        search_user_memories(user_id, payload.message)
+    )
     agent_result = runner.run(
         db=db,
         user_id=user_id,
         session_id=session.id,
         user_message=payload.message,
+        long_term_memory_context=long_term_memory_context,
     )
     answer = agent_result.final_answer.strip() or _empty_answer_message()
     used_rag = agent_result.used_rag
@@ -196,6 +205,12 @@ def complete_chat(
     )
     _set_title_if_needed(session, is_first_message=is_first_message, user_message=payload.message)
     db.commit()
+    remember_turn(
+        user_id=user_id,
+        session_id=session.id,
+        user_message=payload.message,
+        assistant_message=answer,
+    )
 
     return ChatResponse(
         session_id=session.id,
@@ -270,12 +285,16 @@ def _stream_chat_events(
             return
 
         runner = get_agent_runner()
+        long_term_memory_context = format_memories_for_prompt(
+            search_user_memories(user_id, user_message)
+        )
         tool_results_payload: list[dict] = []
         stream = runner.stream(
             db=db,
             user_id=user_id,
             session_id=session_id,
             user_message=user_message,
+            long_term_memory_context=long_term_memory_context,
         )
         agent_result = None
         while True:
@@ -343,6 +362,12 @@ def _stream_chat_events(
             session,
             is_first_message=is_first_message,
             user_message=user_message,
+        )
+        remember_turn(
+            user_id=user_id,
+            session_id=session_id,
+            user_message=user_message,
+            assistant_message=full_text,
         )
         final_title = session.title
         yield ("done", {"session_id": session_id, "title": final_title})

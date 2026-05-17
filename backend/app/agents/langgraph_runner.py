@@ -197,12 +197,23 @@ class LangGraphAgentRunner:
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
-        self.agent = create_agent(
+        self.base_system_prompt = _build_system_prompt()
+        self.agent = self._create_agent(self.base_system_prompt)
+
+    def _create_agent(self, system_prompt: str):
+        return create_agent(
             model=self.model,
             tools=build_runtime_tools(),
-            system_prompt=_build_system_prompt(),
+            system_prompt=system_prompt,
             checkpointer=get_checkpointer(),
         )
+
+    def _agent_for_memory_context(self, long_term_memory_context: str | None):
+        context = (long_term_memory_context or "").strip()
+        if not context:
+            return self.agent
+        system_prompt = f"{self.base_system_prompt}\n\n{context}"
+        return self._create_agent(system_prompt)
 
     def run(
         self,
@@ -211,6 +222,7 @@ class LangGraphAgentRunner:
         user_id: int,
         session_id: int,
         user_message: str,
+        long_term_memory_context: str | None = None,
     ) -> AgentRunResult:
         input_messages = build_input_messages(
             db,
@@ -218,12 +230,13 @@ class LangGraphAgentRunner:
             session_id=session_id,
             current_user_message=user_message,
         )
+        agent = self._agent_for_memory_context(long_term_memory_context)
         ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
         key = _tool_context_key(user_id, session_id)
         register_tool_context(key, ctx)
         token = set_tool_context(ctx)
         try:
-            result = self.agent.invoke(
+            result = agent.invoke(
                 {"messages": input_messages},
                 config=_runtime_config(user_id, session_id),
             )
@@ -239,6 +252,7 @@ class LangGraphAgentRunner:
         user_id: int,
         session_id: int,
         user_message: str,
+        long_term_memory_context: str | None = None,
     ) -> Generator[tuple[str, Any], None, AgentRunResult]:
         input_messages = build_input_messages(
             db,
@@ -246,6 +260,7 @@ class LangGraphAgentRunner:
             session_id=session_id,
             current_user_message=user_message,
         )
+        agent = self._agent_for_memory_context(long_term_memory_context)
 
         delta_parts: list[str] = []
         final_message_text = ""
@@ -272,7 +287,7 @@ class LangGraphAgentRunner:
             },
         )
         try:
-            for mode, chunk in self.agent.stream(
+            for mode, chunk in agent.stream(
                 {"messages": input_messages},
                 config=_runtime_config(user_id, session_id),
                 stream_mode=["messages", "updates"],

@@ -97,6 +97,10 @@ class Settings(BaseSettings):
 
     agent_backend: str = "langgraph"
     langgraph_checkpoint_url: str | None = None
+    mem0_enabled: bool = False
+    mem0_api_key: str = ""
+    mem0_top_k: int = 5
+    mem0_agent_id: str = "lrag"
     public_kb_write_mode: str = "all"
     enable_agent_rag: bool = True
     static_dir: str = "/app/static"
