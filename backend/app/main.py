@@ -52,6 +52,9 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 def on_startup() -> None:
     """应用进程启动时执行：创建 pgvector 扩展与 ORM 表（若不存在）。"""
     init_db()
+    from .services.mcp_tools import initialize_mcp_tools
+
+    initialize_mcp_tools(settings=settings)
     if settings.agent_backend == "langgraph":
         from .agents.checkpoints import get_checkpointer
 

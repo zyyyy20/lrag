@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     mem0_api_key: str = ""
     mem0_top_k: int = 5
     mem0_agent_id: str = "lrag"
+    mcp_tavily_enabled: bool = False
+    mcp_tavily_url: str = "https://mcp.tavily.com/mcp/"
+    mcp_tavily_api_key: str = ""
+    mcp_tavily_transport: str = "streamable_http"
     public_kb_write_mode: str = "all"
     enable_agent_rag: bool = True
     static_dir: str = "/app/static"
