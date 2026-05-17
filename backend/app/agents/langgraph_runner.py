@@ -1,8 +1,6 @@
 """LangGraph/LangChain agent runner."""
 from __future__ import annotations
 
-import json
-import logging
 from typing import Any, Generator
 
 from langchain.agents import create_agent
@@ -23,9 +21,10 @@ from ..tools.runtime import (
 from ..tools.types import ToolContext, ToolResult
 from .checkpoints import build_thread_config, get_checkpointer
 from .langgraph_memory import build_input_messages
+from .prompts import build_base_system_prompt, build_system_prompt
+from .sources import extract_sources
+from .tool_events import parse_tool_payload, tool_call_events
 from .types import AgentRunResult
-
-logger = logging.getLogger(__name__)
 
 
 def _tool_context_key(user_id: int, session_id: int) -> str:
@@ -38,52 +37,6 @@ def _runtime_config(user_id: int, session_id: int) -> dict[str, Any]:
     return config
 
 
-def _build_system_prompt() -> str:
-    return """你是 LRAG 的对话助手。
-普通问题可以直接回答。
-
-工具规则：
-- 当用户要求总结会话、生成发票、查看 token 用量、生成 HTML 票据时，调用 generate_conversation_invoice。
-- retrieve_knowledge_base 只能基于当前请求绑定的会话知识库检索；如果当前会话不是知识库会话，工具会返回不可用结果。
-- 当用户询问上传文档、知识库内容、文件、手册、制度、部署步骤、说明书、政策、条款等内容时，先调用 retrieve_knowledge_base，再基于工具返回的 context 回答。
-- 当用户询问具体人名、组织、项目、产品、文档、术语、日期、金额、编号，或提出“X是谁 / X是什么 / Who is X / What is X”这类实体事实问题时，如果这些信息可能来自当前知识库，先调用 retrieve_knowledge_base。
-- 当问题涉及最新信息、当前新闻、联网资料、外部网页、价格、版本、政策变化、实时数据，或用户明确要求联网搜索时，调用 Tavily MCP 搜索工具。
-- 当用户要求总结、读取或分析具体 URL 内容时，优先调用 Tavily MCP extract/抓取类工具。
-- 使用联网结果回答时，尽量附带来源 URL；不要把联网搜索结果写入长期记忆，除非用户明确要求记住。
-- 不要声称已经检索或调用了 retrieve_knowledge_base，除非工具确实返回了结果。
-- 如果 retrieve_knowledge_base 返回的 context 为空，明确说明知识库中没有检索到匹配内容。
-- 不要编造引用来源。不要把 HTML 原文放进回答。"""
-
-
-def _tool_result_from_payload(payload: dict[str, Any]) -> ToolResult:
-    return ToolResult(
-        tool=str(payload.get("tool") or "unknown"),
-        ok=bool(payload.get("ok")),
-        data=dict(payload.get("data") or {}),
-        message=str(payload.get("message") or ""),
-        type=str(payload.get("type") or "tool_result"),
-    )
-
-
-def _parse_tool_payload(content: Any) -> ToolResult | None:
-    if isinstance(content, dict):
-        return _tool_result_from_payload(content)
-    if isinstance(content, list):
-        text = "".join(
-            str(item.get("text", "")) if isinstance(item, dict) else str(item)
-            for item in content
-        )
-    else:
-        text = str(content or "")
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Unable to decode LangGraph tool payload: %s", text[:300])
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return _tool_result_from_payload(payload)
-
 
 def _message_text(content: Any) -> str:
     if isinstance(content, str):
@@ -94,62 +47,6 @@ def _message_text(content: Any) -> str:
             for item in content
         )
     return str(content or "")
-
-
-def _safe_tool_args(value: Any) -> Any:
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value
-    return value
-
-
-def _tool_display_title(tool_name: str) -> str:
-    titles = {
-        "retrieve_knowledge_base": "查询知识库",
-        "generate_conversation_invoice": "生成对话发票",
-        "tavily_search": "联网搜索",
-        "tavily_extract": "读取网页",
-        "tavily_crawl": "爬取网站",
-        "tavily_map": "生成站点地图",
-        "tavily_research": "联网研究",
-    }
-    return titles.get(tool_name, tool_name)
-
-
-def _tool_call_events(message: Any) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    raw_calls = list(getattr(message, "tool_calls", None) or [])
-    additional_kwargs = getattr(message, "additional_kwargs", None) or {}
-    if isinstance(additional_kwargs, dict):
-        raw_calls.extend(additional_kwargs.get("tool_calls") or [])
-
-    for call in raw_calls:
-        if not isinstance(call, dict):
-            continue
-        function = call.get("function") if isinstance(call.get("function"), dict) else {}
-        name = str(
-            call.get("name")
-            or call.get("tool")
-            or function.get("name")
-            or "unknown"
-        )
-        call_id = str(call.get("id") or f"{name}:{len(events)}")
-        args = call.get("args")
-        if args is None:
-            args = function.get("arguments")
-        events.append(
-            {
-                "id": call_id,
-                "type": "tool_call",
-                "tool": name,
-                "title": _tool_display_title(name),
-                "args": _safe_tool_args(args or {}),
-                "status": "running",
-            }
-        )
-    return events
 
 
 def _agent_step(
@@ -182,18 +79,6 @@ def _messages_from_update(update: Any) -> list[Any]:
     return messages
 
 
-def _extract_sources(result: ToolResult) -> list[Source]:
-    if result.tool != "retrieve_knowledge_base":
-        return []
-    sources: list[Source] = []
-    for item in result.data.get("sources") or []:
-        try:
-            sources.append(Source.model_validate(item))
-        except Exception:
-            logger.warning("Invalid source returned by RAG tool: %s", item)
-    return sources
-
-
 class LangGraphAgentRunner:
     def __init__(self) -> None:
         settings = get_settings()
@@ -205,7 +90,7 @@ class LangGraphAgentRunner:
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
-        self.base_system_prompt = _build_system_prompt()
+        self.base_system_prompt = build_base_system_prompt()
         self.agent = self._create_agent(self.base_system_prompt)
 
     def _create_agent(self, system_prompt: str):
@@ -217,10 +102,12 @@ class LangGraphAgentRunner:
         )
 
     def _agent_for_memory_context(self, long_term_memory_context: str | None):
-        context = (long_term_memory_context or "").strip()
-        if not context:
+        system_prompt = build_system_prompt(
+            self.base_system_prompt,
+            long_term_memory_context,
+        )
+        if system_prompt == self.base_system_prompt:
             return self.agent
-        system_prompt = f"{self.base_system_prompt}\n\n{context}"
         return self._create_agent(system_prompt)
 
     def run(
@@ -336,7 +223,7 @@ class LangGraphAgentRunner:
 
                 for message in _messages_from_update(chunk):
                     if isinstance(message, AIMessage):
-                        for event in _tool_call_events(message):
+                        for event in tool_call_events(message):
                             event_id = str(event["id"])
                             if event_id in seen_tool_calls:
                                 continue
@@ -359,13 +246,13 @@ class LangGraphAgentRunner:
                         continue
 
                     if isinstance(message, ToolMessage):
-                        parsed = _parse_tool_payload(message.content)
+                        parsed = parse_tool_payload(message.content)
                         if parsed is None:
                             continue
                         tool_results.append(parsed)
                         if parsed.tool == "retrieve_knowledge_base":
                             used_rag = bool(parsed.data.get("used_rag"))
-                            sources = _extract_sources(parsed)
+                            sources = extract_sources(parsed)
                             if not used_rag:
                                 notice = parsed.message
                         yield ("tool_result", parsed)
@@ -404,13 +291,13 @@ class LangGraphAgentRunner:
 
         for message in messages:
             if isinstance(message, ToolMessage):
-                parsed = _parse_tool_payload(message.content)
+                parsed = parse_tool_payload(message.content)
                 if parsed is None:
                     continue
                 tool_results.append(parsed)
                 if parsed.tool == "retrieve_knowledge_base":
                     used_rag = bool(parsed.data.get("used_rag"))
-                    sources = _extract_sources(parsed)
+                    sources = extract_sources(parsed)
                     if not used_rag:
                         notice = parsed.message
             elif isinstance(message, AIMessage) and message.content:

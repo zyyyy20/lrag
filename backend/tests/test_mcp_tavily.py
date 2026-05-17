@@ -3,13 +3,13 @@ from unittest.mock import Mock, patch
 
 
 class McpTavilyTests(unittest.TestCase):
-    def test_build_tavily_server_config_uses_api_key_query_param(self):
-        from app.services.mcp_tools import build_tavily_server_config
+    def test_build_mcp_server_config_uses_query_params(self):
+        from app.tools.mcp import build_mcp_server_config
 
-        config = build_tavily_server_config(
-            "https://mcp.tavily.com/mcp/?existing=1",
-            "tvly-test-key",
-            "streamable_http",
+        config = build_mcp_server_config(
+            url="https://mcp.tavily.com/mcp/?existing=1",
+            transport="streamable_http",
+            query_params={"tavilyApiKey": "tvly-test-key"},
         )
 
         self.assertEqual(config["transport"], "streamable_http")
@@ -72,10 +72,9 @@ class McpTavilyTests(unittest.TestCase):
         from app.tools import builder
 
         cached_tool = Mock(name="cached_mcp_tool")
-        settings = Mock(mcp_tavily_enabled=True)
 
         with (
-            patch("app.tools.builder.get_settings", return_value=settings),
+            patch("app.tools.builder.build_local_tools", return_value=[]),
             patch("app.tools.builder.get_cached_mcp_tools", return_value=[cached_tool]),
         ):
             tools = builder.build_runtime_tools()
