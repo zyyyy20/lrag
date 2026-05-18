@@ -92,17 +92,6 @@ export interface SessionDetail extends SessionItem {
   messages: Message[];
 }
 
-export interface ChatResponse {
-  session_id: number;
-  answer: string;
-  used_rag: boolean;
-  sources: Source[];
-  used_web?: boolean;
-  web_sources?: WebSource[];
-  notice?: string | null;
-  tool_results?: ToolResult[];
-}
-
 export interface DocumentItem {
   id: number;
   knowledge_base_id: number;

@@ -1,6 +1,5 @@
 import type {
   ChatMode,
-  ChatResponse,
   DocumentItem,
   KnowledgeBase,
   SessionDetail,
@@ -79,13 +78,6 @@ export const api = {
   getSession: (id: number) => request<SessionDetail>(`/api/sessions/${id}`),
   deleteSession: (id: number) =>
     request<void>(`/api/sessions/${id}`, { method: "DELETE" }),
-
-  // ---- Chat ----
-  chat: (message: string, sessionId?: number | null) =>
-    request<ChatResponse>("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({ message, session_id: sessionId ?? null }),
-    }),
 
   chatStream: (
     message: string,

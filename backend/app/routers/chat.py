@@ -7,16 +7,13 @@ from typing import Generator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
-from ..database import get_db
 from ..dependencies.auth import get_current_user
 from ..models import User
-from ..schemas.chat import ChatRequest, ChatResponse
+from ..schemas.chat import ChatRequest
 from ..services.chat_workflow import (
     ChatSessionNotFound,
     StreamEvent,
-    complete_chat,
     start_stream_chat,
 )
 
@@ -27,19 +24,6 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-@router.post("/chat", response_model=ChatResponse)
-def chat(
-    payload: ChatRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ChatResponse:
-    """Non-streaming chat endpoint scoped to the current debug guest user."""
-    try:
-        return complete_chat(db, user_id=current_user.id, payload=payload)
-    except ChatSessionNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _encode_sse_events(events: Generator[StreamEvent, None, None]) -> Generator[str, None, None]:

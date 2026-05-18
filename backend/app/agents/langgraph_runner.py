@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..schemas.chat import Source, WebSource
+from ..services.long_term_memory import format_memories_for_prompt, search_user_memories
 from ..tools.builder import build_runtime_tools
 from ..tools.runtime import (
     clear_tool_context,
     register_tool_context,
-    reset_tool_context,
     set_tool_context,
     unregister_tool_context,
 )
@@ -36,7 +36,6 @@ def _runtime_config(user_id: int, session_id: int) -> dict[str, Any]:
     config = build_thread_config(user_id, session_id)
     config["configurable"]["tool_context_key"] = _tool_context_key(user_id, session_id)
     return config
-
 
 
 def _message_text(content: Any) -> str:
@@ -94,6 +93,16 @@ def _merge_web_sources(
     return merged
 
 
+def _memory_context_for_user_message(
+    *,
+    user_id: int,
+    user_message: str,
+    search_memories=search_user_memories,
+    format_memories=format_memories_for_prompt,
+) -> str:
+    return format_memories(search_memories(user_id, user_message))
+
+
 class LangGraphAgentRunner:
     def __init__(self) -> None:
         settings = get_settings()
@@ -116,7 +125,7 @@ class LangGraphAgentRunner:
             checkpointer=get_checkpointer(),
         )
 
-    def _agent_for_memory_context(self, long_term_memory_context: str | None):
+    def _agent_for_context(self, long_term_memory_context: str | None):
         system_prompt = build_system_prompt(
             self.base_system_prompt,
             long_term_memory_context,
@@ -125,36 +134,6 @@ class LangGraphAgentRunner:
             return self.agent
         return self._create_agent(system_prompt)
 
-    def run(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        session_id: int,
-        user_message: str,
-        long_term_memory_context: str | None = None,
-    ) -> AgentRunResult:
-        input_messages = build_input_messages(
-            db,
-            user_id=user_id,
-            session_id=session_id,
-            current_user_message=user_message,
-        )
-        agent = self._agent_for_memory_context(long_term_memory_context)
-        ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
-        key = _tool_context_key(user_id, session_id)
-        register_tool_context(key, ctx)
-        token = set_tool_context(ctx)
-        try:
-            result = agent.invoke(
-                {"messages": input_messages},
-                config=_runtime_config(user_id, session_id),
-            )
-            return self._to_result(result)
-        finally:
-            reset_tool_context(token)
-            unregister_tool_context(key)
-
     def stream(
         self,
         *,
@@ -162,7 +141,6 @@ class LangGraphAgentRunner:
         user_id: int,
         session_id: int,
         user_message: str,
-        long_term_memory_context: str | None = None,
     ) -> Generator[tuple[str, Any], None, AgentRunResult]:
         input_messages = build_input_messages(
             db,
@@ -170,7 +148,11 @@ class LangGraphAgentRunner:
             session_id=session_id,
             current_user_message=user_message,
         )
-        agent = self._agent_for_memory_context(long_term_memory_context)
+        memory_context = _memory_context_for_user_message(
+            user_id=user_id,
+            user_message=user_message,
+        )
+        agent = self._agent_for_context(memory_context)
 
         delta_parts: list[str] = []
         final_message_text = ""
@@ -302,53 +284,6 @@ class LangGraphAgentRunner:
             yield ("agent_step", _agent_step("answer", "生成回答", status="success"))
         return AgentRunResult(
             final_answer=final_answer,
-            tool_results=tool_results,
-            used_rag=used_rag,
-            sources=sources,
-            used_web=used_web,
-            web_sources=web_sources,
-            notice=notice,
-        )
-
-    def _to_result(self, result: dict[str, Any]) -> AgentRunResult:
-        messages = list(result.get("messages") or [])
-        final_answer = ""
-        tool_results: list[ToolResult] = []
-        used_rag = False
-        sources: list[Source] = []
-        used_web = False
-        web_sources: list[WebSource] = []
-        notice: str | None = None
-
-        for message in messages:
-            if isinstance(message, ToolMessage):
-                parsed = parse_tool_payload(
-                    message.content,
-                    tool_name=getattr(message, "name", None),
-                )
-                if parsed is None:
-                    continue
-                tool_results.append(parsed)
-                if parsed.tool == "retrieve_knowledge_base":
-                    used_rag = bool(parsed.data.get("used_rag"))
-                    sources = extract_sources(parsed)
-                    if not used_rag:
-                        notice = parsed.message
-                new_web_sources = extract_web_sources(parsed)
-                if new_web_sources:
-                    web_sources = _merge_web_sources(web_sources, new_web_sources)
-                    used_web = True
-            elif isinstance(message, AIMessage) and message.content:
-                final_answer = (
-                    message.content
-                    if isinstance(message.content, str)
-                    else str(message.content)
-                )
-
-        if not final_answer and tool_results:
-            final_answer = tool_results[-1].message
-        return AgentRunResult(
-            final_answer=final_answer.strip(),
             tool_results=tool_results,
             used_rag=used_rag,
             sources=sources,

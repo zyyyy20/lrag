@@ -19,7 +19,7 @@ class McpTavilyTests(unittest.TestCase):
         )
 
     def test_initialize_mcp_tools_caches_loaded_tools(self):
-        from app.services import mcp_tools
+        from app.tools import mcp
 
         settings = Mock(
             mcp_tavily_enabled=True,
@@ -33,15 +33,15 @@ class McpTavilyTests(unittest.TestCase):
             self.assertIn("tavily", server_configs)
             return [loaded_tool]
 
-        mcp_tools.clear_mcp_tools()
-        mcp_tools.initialize_mcp_tools(settings=settings, loader=fake_loader)
+        mcp.clear_mcp_tools()
+        mcp.initialize_mcp_tools(settings=settings, loader=fake_loader)
 
-        self.assertEqual(mcp_tools.get_cached_mcp_tools(), [loaded_tool])
+        self.assertEqual(mcp.get_cached_mcp_tools(), [loaded_tool])
 
     def test_initialize_mcp_tools_wraps_async_only_tools_for_sync_agent(self):
         from langchain_core.tools import StructuredTool
 
-        from app.services import mcp_tools
+        from app.tools import mcp
 
         async def async_tool(query: str):
             return {"answer": query}
@@ -62,9 +62,9 @@ class McpTavilyTests(unittest.TestCase):
         async def fake_loader(_server_configs):
             return [tool]
 
-        mcp_tools.clear_mcp_tools()
-        mcp_tools.initialize_mcp_tools(settings=settings, loader=fake_loader)
-        wrapped = mcp_tools.get_cached_mcp_tools()[0]
+        mcp.clear_mcp_tools()
+        mcp.initialize_mcp_tools(settings=settings, loader=fake_loader)
+        wrapped = mcp.get_cached_mcp_tools()[0]
 
         self.assertEqual(wrapped.invoke({"query": "hello"}), {"answer": "hello"})
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..dependencies.auth import get_current_user
-from ..models import ChatMode, KnowledgeBase, Message, User
+from ..models import ChatMode, KnowledgeBase, User
 from ..models import Session as ChatSession
 from ..schemas import MessageOut, SessionCreate, SessionDetail, SessionOut
 

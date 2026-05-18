@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -26,13 +26,3 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None
     message: str = Field(..., min_length=1, max_length=8000)
 
-
-class ChatResponse(BaseModel):
-    session_id: int
-    answer: str
-    used_rag: bool
-    sources: List[Source] = []
-    used_web: bool = False
-    web_sources: List[WebSource] = []
-    notice: Optional[str] = None
-    tool_results: List[dict[str, Any]] = []

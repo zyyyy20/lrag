@@ -11,12 +11,10 @@ from ..agents.factory import get_agent_runner
 from ..database import session_scope
 from ..models import ChatMode, Message
 from ..models import Session as ChatSession
-from ..schemas.chat import ChatRequest, ChatResponse
+from ..schemas.chat import ChatRequest
 from .llm import get_llm
 from .long_term_memory import (
-    format_memories_for_prompt,
     remember_turn,
-    search_user_memories,
 )
 from ..agents.web_sources import extract_web_sources
 from ..tools.types import ToolResult
@@ -215,71 +213,6 @@ def _web_meta_from_result(session_id: int, agent_result) -> dict:
     }
 
 
-def complete_chat(
-    db: Session,
-    *,
-    user_id: int,
-    payload: ChatRequest,
-) -> ChatResponse:
-    """Run one non-streaming chat turn and persist both user and assistant messages."""
-    session, is_first_message = _get_or_create_session(db, user_id=user_id, payload=payload)
-    _save_user_message(
-        db,
-        user_id=user_id,
-        session_id=session.id,
-        content=payload.message,
-    )
-
-    runner = get_agent_runner()
-    long_term_memory_context = format_memories_for_prompt(
-        search_user_memories(user_id, payload.message)
-    )
-    agent_result = runner.run(
-        db=db,
-        user_id=user_id,
-        session_id=session.id,
-        user_message=payload.message,
-        long_term_memory_context=long_term_memory_context,
-    )
-    answer = agent_result.final_answer.strip() or _empty_answer_message()
-    used_rag = agent_result.used_rag
-    sources = agent_result.sources
-    used_web = agent_result.used_web
-    web_sources = agent_result.web_sources
-    notice = agent_result.notice
-    tool_results = [item.model_dump() for item in agent_result.tool_results]
-
-    source_payload = [s.model_dump(mode="json") for s in sources] if sources else []
-    _save_assistant_message(
-        db,
-        user_id=user_id,
-        session_id=session.id,
-        content=answer,
-        used_rag=used_rag,
-        sources=source_payload,
-        tool_results=tool_results,
-    )
-    _set_title_if_needed(session, is_first_message=is_first_message, user_message=payload.message)
-    db.commit()
-    remember_turn(
-        user_id=user_id,
-        session_id=session.id,
-        user_message=payload.message,
-        assistant_message=answer,
-    )
-
-    return ChatResponse(
-        session_id=session.id,
-        answer=answer,
-        used_rag=used_rag,
-        sources=sources,
-        used_web=used_web,
-        web_sources=web_sources,
-        notice=notice,
-        tool_results=tool_results,
-    )
-
-
 def start_stream_chat(
     *,
     user_id: int,
@@ -347,16 +280,12 @@ def _stream_chat_events(
             return
 
         runner = get_agent_runner()
-        long_term_memory_context = format_memories_for_prompt(
-            search_user_memories(user_id, user_message)
-        )
         tool_results_payload: list[dict] = []
         stream = runner.stream(
             db=db,
             user_id=user_id,
             session_id=session_id,
             user_message=user_message,
-            long_term_memory_context=long_term_memory_context,
         )
         agent_result = None
         while True:

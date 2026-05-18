@@ -19,10 +19,6 @@ def set_tool_context(ctx: ToolContext) -> Token[ToolContext | None]:
     return _current_tool_context.set(ctx)
 
 
-def reset_tool_context(token: Token[ToolContext | None]) -> None:
-    _current_tool_context.reset(token)
-
-
 def clear_tool_context() -> None:
     _current_tool_context.set(None)
 
