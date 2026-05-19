@@ -88,6 +88,15 @@ def ensure_pgvector() -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
 
+def ensure_session_memory_columns() -> None:
+    """Add short-term memory columns when upgrading an existing development DB."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS summary TEXT"))
+        conn.execute(
+            text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS summary_message_id INTEGER")
+        )
+
+
 def init_db() -> None:
     """应用启动时调用：创建扩展并根据 ORM 元数据创建缺失的表。
 
@@ -98,3 +107,4 @@ def init_db() -> None:
 
     ensure_pgvector()
     Base.metadata.create_all(bind=engine)
+    ensure_session_memory_columns()

@@ -5,7 +5,7 @@ import enum
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Identity, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Identity, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -44,6 +44,8 @@ class Session(Base):
         nullable=True,
         index=True,
     )
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

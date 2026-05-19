@@ -16,6 +16,7 @@ from .llm import get_llm
 from .long_term_memory import (
     remember_turn,
 )
+from .short_term_memory import maybe_update_session_summary
 from ..tools.core.results import extract_web_sources, tool_result_from_payload
 
 logger = logging.getLogger(__name__)
@@ -374,6 +375,11 @@ def _stream_chat_events(
             session,
             is_first_message=is_first_message,
             user_message=user_message,
+        )
+        maybe_update_session_summary(
+            db,
+            user_id=user_id,
+            session_id=session_id,
         )
         remember_turn(
             user_id=user_id,

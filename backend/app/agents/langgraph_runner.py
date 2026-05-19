@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Generator
+from uuid import uuid4
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
@@ -20,21 +21,22 @@ from ..tools.core.runtime import (
 )
 from ..tools.core.results import extract_sources, extract_web_sources, parse_tool_payload
 from ..tools.core.types import ToolContext, ToolResult
-from .checkpoints import build_thread_config, get_checkpointer
+from .checkpoints import get_checkpointer
 from .langgraph_memory import build_input_messages
 from .prompts import build_base_system_prompt, build_system_prompt
 from .tool_events import tool_call_events
 from .types import AgentRunResult
 
 
-def _tool_context_key(user_id: int, session_id: int) -> str:
-    return str(build_thread_config(user_id, session_id)["configurable"]["thread_id"])
-
-
-def _runtime_config(user_id: int, session_id: int) -> dict[str, Any]:
-    config = build_thread_config(user_id, session_id)
-    config["configurable"]["tool_context_key"] = _tool_context_key(user_id, session_id)
-    return config
+def _runtime_config(
+    user_id: int,
+    session_id: int,
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    turn_id = run_id or uuid4().hex
+    thread_id = f"user:{user_id}:session:{session_id}:turn:{turn_id}"
+    return {"configurable": {"thread_id": thread_id, "tool_context_key": thread_id}}
 
 
 def _message_text(content: Any) -> str:
@@ -141,12 +143,16 @@ class LangGraphAgentRunner:
         session_id: int,
         user_message: str,
     ) -> Generator[tuple[str, Any], None, AgentRunResult]:
+
+        # 拼接短期记忆
         input_messages = build_input_messages(
             db,
             user_id=user_id,
             session_id=session_id,
             current_user_message=user_message,
         )
+
+        # 长期记忆
         memory_context = _memory_context_for_user_message(
             user_id=user_id,
             user_message=user_message,
@@ -163,7 +169,8 @@ class LangGraphAgentRunner:
         notice: str | None = None
 
         ctx = ToolContext(db=db, user_id=user_id, session_id=session_id)
-        key = _tool_context_key(user_id, session_id)
+        runtime_config = _runtime_config(user_id, session_id)
+        key = str(runtime_config["configurable"]["tool_context_key"])
         register_tool_context(key, ctx)
         set_tool_context(ctx)
         seen_tool_calls: set[str] = set()
@@ -182,7 +189,7 @@ class LangGraphAgentRunner:
         try:
             for mode, chunk in agent.stream(
                 {"messages": input_messages},
-                config=_runtime_config(user_id, session_id),
+                config=runtime_config,
                 stream_mode=["messages", "updates"],
             ):
                 if mode == "messages":

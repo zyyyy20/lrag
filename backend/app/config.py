@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     mem0_api_key: str = ""
     mem0_top_k: int = 5
     mem0_agent_id: str = "lrag"
+    short_memory_enabled: bool = True
+    short_memory_recent_turns: int = 8
+    short_memory_summary_threshold: int = 20
+    short_memory_summary_batch_size: int = 12
     mcp_tavily_enabled: bool = False
     mcp_tavily_url: str = "https://mcp.tavily.com/mcp/"
     mcp_tavily_api_key: str = ""
