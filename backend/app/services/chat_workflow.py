@@ -12,11 +12,7 @@ from ..database import session_scope
 from ..models import ChatMode, Message
 from ..models import Session as ChatSession
 from ..schemas.chat import ChatRequest
-from .llm import get_llm
-from .long_term_memory import (
-    remember_turn,
-)
-from .short_term_memory import maybe_update_session_summary
+from .chat_post_tasks import schedule_chat_post_tasks
 from ..tools.core.results import extract_web_sources, tool_result_from_payload
 
 logger = logging.getLogger(__name__)
@@ -109,40 +105,8 @@ def _save_assistant_message(
     )
 
 
-def _set_title_if_needed(session: ChatSession, *, is_first_message: bool, user_message: str) -> None:
-    if not is_first_message:
-        return
-    try:
-        session.title = generate_title(user_message)
-    except Exception:
-        logger.warning("Title generation failed", exc_info=True)
-
-
 def _empty_answer_message() -> str:
     return "抱歉，本次没有生成有效回复，请稍后重试。"
-
-
-def generate_title(first_user_message: str) -> str:
-    fallback = first_user_message.strip().splitlines()[0][:40] or "新会话"
-    try:
-        prompt = (
-            "Generate a short, descriptive title (max 6 words, no quotes, no trailing "
-            "punctuation) for a conversation that starts with this user message:\n\n"
-            f"{first_user_message.strip()[:500]}"
-        )
-        title = get_llm().chat(
-            [
-                {"role": "system", "content": "You produce concise titles."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            max_tokens=30,
-        )
-        title = title.strip().strip("\"'").strip()
-        return title[:80] if title else fallback
-    except Exception:
-        logger.warning("Title generation failed; using fallback", exc_info=True)
-        return fallback
 
 
 def _rag_meta_from_tool_payload(session_id: int, payload: dict) -> dict | None:
@@ -261,6 +225,8 @@ def _stream_chat_events(
     notice: str | None = None
     full_text_parts: list[str] = []
     final_title: str | None = None
+    completed_meta: dict | None = None
+    post_task_payload: dict | None = None
 
     yield (
         "meta",
@@ -271,6 +237,7 @@ def _stream_chat_events(
             "used_web": used_web,
             "web_sources": web_sources_payload,
             "notice": notice,
+            "phase": "started",
         },
     )
 
@@ -323,7 +290,6 @@ def _stream_chat_events(
                     used_rag = bool(rag_meta["used_rag"])
                     sources_payload = list(rag_meta["sources"])
                     notice = rag_meta["notice"]
-                    yield ("meta", rag_meta)
             elif kind in {"agent_step", "tool_call"}:
                 yield (kind, data)
 
@@ -344,24 +310,6 @@ def _stream_chat_events(
             source.model_dump(mode="json") for source in agent_result.web_sources
         ]
         notice = agent_result.notice
-        if (used_rag or sources_payload or notice) and not any(
-            item.get("tool") == "retrieve_knowledge_base"
-            for item in tool_results_payload
-        ):
-            yield (
-                "meta",
-                {
-                    "session_id": session_id,
-                    "used_rag": used_rag,
-                    "sources": sources_payload,
-                    "used_web": used_web,
-                    "web_sources": web_sources_payload,
-                    "notice": notice,
-                },
-            )
-        if used_web or web_sources_payload:
-            yield ("meta", _web_meta_from_result(session_id, agent_result))
-
         _save_assistant_message(
             db,
             user_id=user_id,
@@ -371,21 +319,19 @@ def _stream_chat_events(
             sources=sources_payload,
             tool_results=tool_results_payload,
         )
-        _set_title_if_needed(
-            session,
-            is_first_message=is_first_message,
-            user_message=user_message,
-        )
-        maybe_update_session_summary(
-            db,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        remember_turn(
-            user_id=user_id,
-            session_id=session_id,
-            user_message=user_message,
-            assistant_message=full_text,
-        )
         final_title = session.title
-        yield ("done", {"session_id": session_id, "title": final_title})
+        completed_meta = _web_meta_from_result(session_id, agent_result)
+        completed_meta["phase"] = "completed"
+        post_task_payload = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "user_message": user_message,
+            "assistant_message": full_text,
+            "is_first_message": is_first_message,
+        }
+
+    if completed_meta is not None:
+        yield ("meta", completed_meta)
+    if post_task_payload is not None:
+        schedule_chat_post_tasks(**post_task_payload)
+    yield ("done", {"session_id": session_id, "title": final_title})
