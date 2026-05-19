@@ -14,13 +14,13 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
-from ..models import Message
-from ..models import Session as ChatSession
-from ..services.llm import get_llm
-from ..services.memory_service import count_tokens
-from .base import ToolContext, ToolResult
-from .runtime import get_tool_context
+from ...config import get_settings
+from ...models import Message
+from ...models import Session as ChatSession
+from ...services.llm import get_llm
+from ...services.memory_service import count_tokens
+from ..core.runtime import get_tool_context
+from ..core.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

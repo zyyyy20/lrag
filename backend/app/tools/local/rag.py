@@ -7,14 +7,14 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from ..config import get_settings
-from ..models import ChatMode, KnowledgeBase
-from ..models import Session as ChatSession
-from ..schemas.chat import Source
-from ..services.memory_service import count_tokens
-from ..services.retrieval import RetrievedChunk, retrieve
-from .base import ToolContext, ToolResult
-from .runtime import get_tool_context
+from ...config import get_settings
+from ...models import ChatMode, KnowledgeBase
+from ...models import Session as ChatSession
+from ...schemas.chat import Source
+from ...services.memory_service import count_tokens
+from ...services.retrieval import RetrievedChunk, retrieve
+from ..core.runtime import get_tool_context
+from ..core.types import ToolContext, ToolResult
 
 TOOL_NAME = "retrieve_knowledge_base"
 MAX_CONTEXT_TOKENS = 1800

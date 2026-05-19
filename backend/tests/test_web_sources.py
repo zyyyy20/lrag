@@ -1,10 +1,9 @@
 import unittest
 
-from app.agents.tool_events import parse_tool_payload
-from app.agents.web_sources import extract_web_sources
 from app.schemas.session import MessageOut
 from app.services.chat_workflow import _sources_event_from_tool_payload
-from app.tools.types import ToolResult
+from app.tools.core.results import extract_web_sources, parse_tool_payload
+from app.tools.core.types import ToolResult
 
 
 class WebSourcesTests(unittest.TestCase):

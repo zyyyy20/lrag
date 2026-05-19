@@ -11,21 +11,20 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..schemas.chat import Source, WebSource
 from ..services.long_term_memory import format_memories_for_prompt, search_user_memories
-from ..tools.builder import build_runtime_tools
-from ..tools.runtime import (
+from ..tools.core.manager import build_agent_tools
+from ..tools.core.runtime import (
     clear_tool_context,
     register_tool_context,
     set_tool_context,
     unregister_tool_context,
 )
-from ..tools.types import ToolContext, ToolResult
+from ..tools.core.results import extract_sources, extract_web_sources, parse_tool_payload
+from ..tools.core.types import ToolContext, ToolResult
 from .checkpoints import build_thread_config, get_checkpointer
 from .langgraph_memory import build_input_messages
 from .prompts import build_base_system_prompt, build_system_prompt
-from .sources import extract_sources
-from .tool_events import parse_tool_payload, tool_call_events
+from .tool_events import tool_call_events
 from .types import AgentRunResult
-from .web_sources import extract_web_sources
 
 
 def _tool_context_key(user_id: int, session_id: int) -> str:
@@ -120,7 +119,7 @@ class LangGraphAgentRunner:
     def _create_agent(self, system_prompt: str):
         return create_agent(
             model=self.model,
-            tools=build_runtime_tools(),
+            tools=build_agent_tools(),
             system_prompt=system_prompt,
             checkpointer=get_checkpointer(),
         )

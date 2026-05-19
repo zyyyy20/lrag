@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..schemas.chat import Source, WebSource
-from ..tools.base import ToolResult
+from ..tools.core.types import ToolResult
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_core.tools import StructuredTool
 
-from ..config import Settings, get_settings
+from ...config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 

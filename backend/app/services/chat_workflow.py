@@ -16,8 +16,7 @@ from .llm import get_llm
 from .long_term_memory import (
     remember_turn,
 )
-from ..agents.web_sources import extract_web_sources
-from ..tools.types import ToolResult
+from ..tools.core.results import extract_web_sources, tool_result_from_payload
 
 logger = logging.getLogger(__name__)
 
@@ -161,16 +160,6 @@ def _rag_meta_from_tool_payload(session_id: int, payload: dict) -> dict | None:
     }
 
 
-def _tool_result_from_payload(payload: dict) -> ToolResult:
-    return ToolResult(
-        tool=str(payload.get("tool") or "unknown"),
-        ok=bool(payload.get("ok")),
-        data=dict(payload.get("data") or {}),
-        message=str(payload.get("message") or ""),
-        type=str(payload.get("type") or "tool_result"),
-    )
-
-
 def _sources_event_from_tool_payload(session_id: int, payload: dict) -> dict | None:
     if payload.get("tool") == "retrieve_knowledge_base":
         data = payload.get("data") or {}
@@ -185,7 +174,7 @@ def _sources_event_from_tool_payload(session_id: int, payload: dict) -> dict | N
             "notice": None if data.get("used_rag") else payload.get("message"),
         }
 
-    web_sources = extract_web_sources(_tool_result_from_payload(payload))
+    web_sources = extract_web_sources(tool_result_from_payload(payload))
     if not web_sources:
         return None
     return {

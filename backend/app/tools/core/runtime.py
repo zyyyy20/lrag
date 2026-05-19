@@ -5,7 +5,7 @@ from contextvars import ContextVar, Token
 from threading import RLock
 from typing import Any
 
-from .base import ToolContext
+from .types import ToolContext
 
 _current_tool_context: ContextVar[ToolContext | None] = ContextVar(
     "current_tool_context",

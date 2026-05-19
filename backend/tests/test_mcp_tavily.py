@@ -105,16 +105,16 @@ class McpTavilyTests(unittest.TestCase):
             "C:/Users/zy/Desktop/lrag/python-mcp-tools/src",
         )
 
-    def test_build_runtime_tools_includes_cached_mcp_tools_when_enabled(self):
-        from app.tools import builder
+    def test_build_agent_tools_includes_cached_mcp_tools_when_enabled(self):
+        from app.tools.core.manager import build_agent_tools
 
         cached_tool = Mock(name="cached_mcp_tool")
 
         with (
-            patch("app.tools.builder.build_local_tools", return_value=[]),
-            patch("app.tools.builder.get_cached_mcp_tools", return_value=[cached_tool]),
+            patch("app.tools.core.manager.build_local_tools", return_value=[]),
+            patch("app.tools.core.manager.get_cached_mcp_tools", return_value=[cached_tool]),
         ):
-            tools = builder.build_runtime_tools()
+            tools = build_agent_tools()
 
         self.assertIn(cached_tool, tools)
 
