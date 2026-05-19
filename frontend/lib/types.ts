@@ -52,6 +52,24 @@ export interface ToolResult {
   };
 }
 
+export interface ActionRequiredEvent {
+  session_id: number;
+  action: "csdn_cookie" | string;
+  provider?: string | null;
+  credential_type?: string | null;
+  draft?: CsdnArticleDraft | null;
+  message?: string | null;
+}
+
+export interface CsdnArticleDraft {
+  title: string;
+  markdown_content: string;
+  description: string;
+  tags: string[];
+  category?: string | null;
+  publish_status?: string | null;
+}
+
 export interface AgentTraceEvent {
   id: string;
   type: "agent_step" | "tool_call" | "tool_result";
@@ -73,6 +91,7 @@ export interface Message {
   web_sources?: WebSource[] | null;
   tool_results?: ToolResult[] | null;
   agent_trace?: AgentTraceEvent[] | null;
+  pending_action?: ActionRequiredEvent | null;
   used_rag?: boolean | null;
   used_web?: boolean | null;
   created_at: string;

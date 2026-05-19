@@ -198,6 +198,21 @@ def _sources_event_from_tool_payload(session_id: int, payload: dict) -> dict | N
     }
 
 
+def _action_required_from_tool_payload(session_id: int, payload: dict) -> dict | None:
+    data = payload.get("data") or {}
+    action = data.get("action_required")
+    if not action:
+        return None
+    return {
+        "session_id": session_id,
+        "action": action,
+        "provider": data.get("provider"),
+        "credential_type": data.get("credential_type"),
+        "draft": data.get("draft"),
+        "message": payload.get("message"),
+    }
+
+
 def _web_meta_from_result(session_id: int, agent_result) -> dict:
     return {
         "session_id": session_id,
@@ -304,6 +319,12 @@ def _stream_chat_events(
                 payload = data.model_dump()
                 tool_results_payload.append(payload)
                 yield ("tool_result", payload)
+                action_required = _action_required_from_tool_payload(
+                    session_id,
+                    payload,
+                )
+                if action_required is not None:
+                    yield ("action_required", action_required)
                 sources_event = _sources_event_from_tool_payload(session_id, payload)
                 if sources_event is not None:
                     yield ("sources", sources_event)

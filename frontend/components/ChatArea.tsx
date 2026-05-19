@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/api";
 import { webSourcesFromToolResult } from "@/lib/webSources";
 import type {
+  ActionRequiredEvent,
   AgentTraceEvent,
   Message,
   SessionItem,
@@ -19,6 +20,11 @@ interface Props {
   error: string | null;
   notice: string | null;
   currentSession: SessionItem | null;
+  onPublishCsdnDraft?: (
+    messageId: Message["id"],
+    payload: { cookie: string; category?: string }
+  ) => void;
+  onDismissAction?: (messageId: Message["id"]) => void;
   onSend: (text: string) => void;
 }
 
@@ -29,6 +35,8 @@ export function ChatArea({
   error,
   notice,
   currentSession,
+  onPublishCsdnDraft,
+  onDismissAction,
   onSend,
 }: Props) {
   const [input, setInput] = useState("");
@@ -87,6 +95,8 @@ export function ChatArea({
                 key={m.id}
                 message={m}
                 streaming={isStreaming}
+                onPublishCsdnDraft={onPublishCsdnDraft}
+                onDismissAction={onDismissAction}
               />
             );
           })}
@@ -103,7 +113,6 @@ export function ChatArea({
           {error}
         </div>
       )}
-
       <form
         onSubmit={handleSubmit}
         className="border-t border-slate-200 bg-white px-6 py-4"
@@ -139,9 +148,16 @@ export function ChatArea({
 function MessageBubble({
   message,
   streaming,
+  onPublishCsdnDraft,
+  onDismissAction,
 }: {
   message: Message;
   streaming?: boolean;
+  onPublishCsdnDraft?: (
+    messageId: Message["id"],
+    payload: { cookie: string; category?: string }
+  ) => void;
+  onDismissAction?: (messageId: Message["id"]) => void;
 }) {
   const isUser = message.role === "user";
   const isEmptyStreaming = streaming && !message.content;
@@ -174,8 +190,119 @@ function MessageBubble({
             toolResults={message.tool_results}
           />
         )}
+        {!isUser && message.pending_action?.action === "csdn_cookie" && (
+          <CsdnPublishCard
+            message={message}
+            onPublish={onPublishCsdnDraft}
+            onDismiss={onDismissAction}
+          />
+        )}
       </div>
     </li>
+  );
+}
+
+function CsdnPublishCard({
+  message,
+  onPublish,
+  onDismiss,
+}: {
+  message: Message;
+  onPublish?: (
+    messageId: Message["id"],
+    payload: { cookie: string; category?: string }
+  ) => void;
+  onDismiss?: (messageId: Message["id"]) => void;
+}) {
+  const [cookie, setCookie] = useState("");
+  const [category, setCategory] = useState(
+    message.pending_action?.draft?.category || "AI Engineering"
+  );
+  const draft = message.pending_action?.draft;
+  const statusText = message.pending_action?.message;
+  const isErrorStatus = statusText?.toLowerCase().includes("failed");
+
+  if (!draft) return null;
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const cleanCookie = cookie.trim();
+        if (!cleanCookie || !onPublish) return;
+        onPublish(message.id, {
+          cookie: cleanCookie,
+          category: category.trim() || undefined,
+        });
+        setCookie("");
+      }}
+      className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-slate-800"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-sky-950">Publish CSDN draft</div>
+          <div className="mt-1 truncate text-sky-800" title={draft.title}>
+            {draft.title}
+          </div>
+          <p className="mt-1 text-sky-700">
+            Enter your CSDN Cookie to publish this draft. The cookie is sent only
+            with this request.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onDismiss?.(message.id)}
+          className="shrink-0 rounded border border-sky-200 bg-white px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100"
+        >
+          Close
+        </button>
+      </div>
+      <details className="mt-2 rounded border border-sky-100 bg-white/70 p-2">
+        <summary className="cursor-pointer font-medium text-sky-800">
+          Draft preview
+        </summary>
+        <div className="mt-2 space-y-1 text-slate-600">
+          <div>Description: {draft.description}</div>
+          <div>Tags: {draft.tags.join(", ") || "-"}</div>
+          <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-[11px] text-slate-100">
+            {draft.markdown_content}
+          </pre>
+        </div>
+      </details>
+      <div className="mt-3 grid gap-2 md:grid-cols-[1fr_180px_auto]">
+        <input
+          type="password"
+          value={cookie}
+          onChange={(event) => setCookie(event.target.value)}
+          placeholder="CSDN Cookie"
+          className="min-w-0 rounded border border-sky-200 bg-white px-3 py-2 outline-none focus:border-sky-500"
+        />
+        <input
+          value={category ?? ""}
+          onChange={(event) => setCategory(event.target.value)}
+          placeholder="Category"
+          className="min-w-0 rounded border border-sky-200 bg-white px-3 py-2 outline-none focus:border-sky-500"
+        />
+        <button
+          type="submit"
+          disabled={!cookie.trim()}
+          className="rounded bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          Confirm publish
+        </button>
+      </div>
+      {statusText && (
+        <div
+          className={`mt-2 rounded border px-2 py-1 text-[11px] ${
+            isErrorStatus
+              ? "border-rose-200 bg-rose-50 text-rose-700"
+              : "border-sky-100 bg-white/70 text-sky-700"
+          }`}
+        >
+          {statusText}
+        </div>
+      )}
+    </form>
   );
 }
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from threading import RLock, Thread
 from typing import Any, Awaitable, Callable
@@ -44,6 +45,7 @@ def build_mcp_server_config(
 
 def build_enabled_mcp_server_configs(settings: Settings) -> dict[str, dict[str, Any]]:
     configs: dict[str, dict[str, Any]] = {}
+    configs.update(_generic_mcp_server_configs(settings))
     if settings.mcp_tavily_enabled and (
         settings.mcp_tavily_api_key or "tavilyApiKey=" in settings.mcp_tavily_url
     ):
@@ -52,6 +54,37 @@ def build_enabled_mcp_server_configs(settings: Settings) -> dict[str, dict[str, 
             transport=settings.mcp_tavily_transport,
             query_params={"tavilyApiKey": settings.mcp_tavily_api_key},
         )
+    return configs
+
+
+def _generic_mcp_server_configs(settings: Settings) -> dict[str, dict[str, Any]]:
+    raw = str(getattr(settings, "mcp_servers_json", "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("MCP_SERVERS_JSON is not valid JSON")
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning("MCP_SERVERS_JSON must be a JSON object")
+        return {}
+
+    configs: dict[str, dict[str, Any]] = {}
+    allowed_keys = {"transport", "url", "headers", "command", "args", "cwd", "env"}
+    for name, config in parsed.items():
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(config, dict):
+            logger.warning("Ignoring MCP server %r because its config is not an object", name)
+            continue
+        transport = config.get("transport")
+        if not isinstance(transport, str) or not transport.strip():
+            logger.warning("Ignoring MCP server %r because transport is missing", name)
+            continue
+        sanitized = {key: value for key, value in config.items() if key in allowed_keys}
+        sanitized["transport"] = transport
+        configs[name] = sanitized
     return configs
 
 

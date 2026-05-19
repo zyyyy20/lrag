@@ -75,8 +75,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str | None = None
-    llm_timeout_seconds: float = 45.0
-    llm_max_retries: int = 1
+    llm_timeout_seconds: float = 180.0
+    llm_max_retries: int = 2
 
     # ----- Embedding（向量检索用） -----
     embedding_provider: str = "openai"
@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     mcp_tavily_url: str = "https://mcp.tavily.com/mcp/"
     mcp_tavily_api_key: str = ""
     mcp_tavily_transport: str = "streamable_http"
+    mcp_servers_json: str = ""
     public_kb_write_mode: str = "all"
     enable_agent_rag: bool = True
     static_dir: str = "/app/static"

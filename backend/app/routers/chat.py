@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Generator
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -26,13 +27,22 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _stream_error_message(exc: Exception) -> str:
+    if isinstance(exc, httpx.ReadTimeout):
+        return (
+            "模型响应超时，请稍后重试；如果是在生成长篇草稿或调用工具，"
+            "可以适当缩短内容或调大 LLM_TIMEOUT_SECONDS。"
+        )
+    return str(exc) or "internal_error"
+
+
 def _encode_sse_events(events: Generator[StreamEvent, None, None]) -> Generator[str, None, None]:
     try:
         for event, data in events:
             yield _sse(event, data)
     except Exception as exc:
         logger.exception("Stream chat failed")
-        yield _sse("error", {"message": str(exc) or "internal_error"})
+        yield _sse("error", {"message": _stream_error_message(exc)})
 
 
 @router.post("/chat/stream")

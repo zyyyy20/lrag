@@ -1,5 +1,7 @@
 import type {
+  ActionRequiredEvent,
   ChatMode,
+  CsdnArticleDraft,
   DocumentItem,
   KnowledgeBase,
   SessionDetail,
@@ -79,6 +81,15 @@ export const api = {
   deleteSession: (id: number) =>
     request<void>(`/api/sessions/${id}`, { method: "DELETE" }),
 
+  publishCsdnDraft: (payload: CsdnArticleDraft & { cookie: string }) =>
+    request<{ ok: boolean; message: string; data: Record<string, unknown> }>(
+      "/api/integrations/csdn/publish",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    ),
+
   chatStream: (
     message: string,
     sessionId: number | null,
@@ -141,6 +152,7 @@ export interface ChatStreamHandlers {
   onSources?: (sources: ChatStreamSources) => void;
   onAgentStep?: (event: import("./types").AgentTraceEvent) => void;
   onToolCall?: (event: import("./types").AgentTraceEvent) => void;
+  onActionRequired?: (event: ActionRequiredEvent) => void;
   onDelta?: (delta: string) => void;
   onToolResult?: (result: import("./types").ToolResult) => void;
   onDone?: (done: ChatStreamDone) => void;
@@ -205,6 +217,8 @@ async function chatStream(
       handlers.onAgentStep?.(data as import("./types").AgentTraceEvent);
     } else if (eventName === "tool_call") {
       handlers.onToolCall?.(data as import("./types").AgentTraceEvent);
+    } else if (eventName === "action_required") {
+      handlers.onActionRequired?.(data as ActionRequiredEvent);
     } else if (eventName === "delta") {
       const content = (data as { content?: string }).content;
       if (typeof content === "string" && content.length > 0) {

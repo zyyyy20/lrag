@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
 import { mergeWebSources, webSourcesFromToolResult } from "@/lib/webSources";
 import type {
+  ActionRequiredEvent,
   AgentTraceEvent,
   DocumentItem,
   KnowledgeBase,
@@ -349,6 +350,14 @@ export default function HomePage() {
             )
           );
         },
+        onActionRequired: (event) => {
+          if (event.message) setChatNotice(event.message);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, pending_action: event } : m
+            )
+          );
+        },
         onDelta: (delta) => {
           setMessages((prev) =>
             prev.map((m) =>
@@ -444,6 +453,109 @@ export default function HomePage() {
     }
   };
 
+  const handlePublishCsdnDraft = async (
+    messageId: Message["id"],
+    payload: {
+      cookie: string;
+      category?: string;
+    }
+  ) => {
+    try {
+      setChatError(null);
+      setChatNotice(null);
+      const targetMessage = messages.find((message) => message.id === messageId);
+      const draft = targetMessage?.pending_action?.draft;
+      if (!draft) {
+        setChatNotice("No CSDN draft is pending.");
+        return;
+      }
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                pending_action: {
+                  ...(message.pending_action as ActionRequiredEvent),
+                  message: "Publishing CSDN draft...",
+                },
+              }
+            : message
+        )
+      );
+      if (draft) {
+        const publishResult = await api.publishCsdnDraft({
+          ...draft,
+          cookie: payload.cookie,
+          category: payload.category || draft.category,
+          publish_status: draft.publish_status || "draft",
+        });
+        const publishMessage =
+          publishResult.message ||
+          "CSDN publish failed. Please check the Cookie, category, and CSDN account limits.";
+        const toolResult: ToolResult = {
+          type: "tool_result",
+          tool: "publish_csdn_article_with_user_credential",
+          ok: publishResult.ok,
+          message: publishMessage,
+          data: publishResult.data,
+        };
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  content: publishResult.ok
+                    ? `${message.content}\n\nCSDN draft published successfully.\nArticle ID: ${String(
+                        publishResult.data.article_id ?? "-"
+                      )}\nURL: ${String(publishResult.data.url ?? "-")}`
+                    : message.content,
+                  pending_action: publishResult.ok
+                    ? null
+                    : {
+                        ...(message.pending_action as ActionRequiredEvent),
+                        message: `CSDN publish failed: ${publishMessage}`,
+                      },
+                  tool_results: [...(message.tool_results ?? []), toolResult],
+                  agent_trace: upsertTraceEvent(
+                    message.agent_trace,
+                    traceEventFromToolResult(toolResult)
+                  ),
+                }
+              : message
+          )
+        );
+        if (publishResult.ok) {
+          setChatNotice("CSDN draft published successfully.");
+        } else {
+          setChatError(`CSDN publish failed: ${publishMessage}`);
+        }
+      }
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                pending_action: {
+                  ...(message.pending_action as ActionRequiredEvent),
+                  message: e instanceof Error ? e.message : String(e),
+                },
+              }
+            : message
+        )
+      );
+    }
+  };
+
+  const handleDismissAction = (messageId: Message["id"]) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId ? { ...message, pending_action: null } : message
+      )
+    );
+  };
+
   return (
     <main className="flex h-screen w-screen overflow-hidden">
       <Sidebar
@@ -462,6 +574,8 @@ export default function HomePage() {
         error={chatError}
         notice={chatNotice}
         currentSession={currentSession}
+        onPublishCsdnDraft={handlePublishCsdnDraft}
+        onDismissAction={handleDismissAction}
         onSend={handleSend}
       />
       <KnowledgeBasePanel

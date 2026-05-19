@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import Mock, patch
 
 
@@ -22,6 +23,7 @@ class McpTavilyTests(unittest.TestCase):
         from app.tools import mcp
 
         settings = Mock(
+            mcp_servers_json="",
             mcp_tavily_enabled=True,
             mcp_tavily_url="https://mcp.tavily.com/mcp/",
             mcp_tavily_api_key="tvly-test-key",
@@ -53,6 +55,7 @@ class McpTavilyTests(unittest.TestCase):
             args_schema={"type": "object", "properties": {"query": {"type": "string"}}},
         )
         settings = Mock(
+            mcp_servers_json="",
             mcp_tavily_enabled=True,
             mcp_tavily_url="https://mcp.tavily.com/mcp/",
             mcp_tavily_api_key="tvly-test-key",
@@ -67,6 +70,40 @@ class McpTavilyTests(unittest.TestCase):
         wrapped = mcp.get_cached_mcp_tools()[0]
 
         self.assertEqual(wrapped.invoke({"query": "hello"}), {"answer": "hello"})
+
+    def test_build_enabled_mcp_server_configs_merges_generic_stdio_servers(self):
+        from app.tools.mcp import build_enabled_mcp_server_configs
+
+        settings = Mock(
+            mcp_servers_json=json.dumps(
+                {
+                    "custom_tool_hub": {
+                        "transport": "stdio",
+                        "command": "python",
+                        "args": ["-m", "mcp_tools_hub"],
+                        "cwd": "C:/Users/zy/Desktop/lrag/python-mcp-tools",
+                        "env": {
+                            "PYTHONPATH": "C:/Users/zy/Desktop/lrag/python-mcp-tools/src",
+                            "CUSTOM_TOOL_TOKEN": "token-value",
+                        },
+                    }
+                }
+            ),
+            mcp_tavily_enabled=False,
+            mcp_tavily_url="https://mcp.tavily.com/mcp/",
+            mcp_tavily_api_key="",
+            mcp_tavily_transport="streamable_http",
+        )
+
+        configs = build_enabled_mcp_server_configs(settings)
+
+        self.assertEqual(configs["custom_tool_hub"]["transport"], "stdio")
+        self.assertEqual(configs["custom_tool_hub"]["command"], "python")
+        self.assertEqual(configs["custom_tool_hub"]["args"], ["-m", "mcp_tools_hub"])
+        self.assertEqual(
+            configs["custom_tool_hub"]["env"]["PYTHONPATH"],
+            "C:/Users/zy/Desktop/lrag/python-mcp-tools/src",
+        )
 
     def test_build_runtime_tools_includes_cached_mcp_tools_when_enabled(self):
         from app.tools import builder
